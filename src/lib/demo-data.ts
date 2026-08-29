@@ -1,4 +1,6 @@
 // DEMO DATA ONLY — replaces with real Supabase aggregate queries in Feature #011.
+// Pending approvals are no longer demo data — see HqDashboard.tsx, which
+// queries cook_applications/rider_applications directly.
 
 export const METRICS = [
   { label: "Orders today", value: "312" },
@@ -20,10 +22,4 @@ export const NAV_SECTIONS = [
   "Subscriptions",
   "Delivery Pricing",
   "Platform Settings",
-];
-
-export const PENDING_APPROVALS = [
-  { id: "APP-201", name: "Serangoon Curry Puff Co.", type: "Home Cook", submitted: "2 days ago" },
-  { id: "APP-200", name: "Bishan Roti Prata Stall", type: "Hawker", submitted: "3 days ago" },
-  { id: "RID-088", name: "Hafiz Rahman (Rider)", type: "Rider", submitted: "5 hours ago" },
 ];

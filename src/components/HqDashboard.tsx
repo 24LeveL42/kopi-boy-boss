@@ -1,14 +1,40 @@
+import Link from "next/link";
 import { TopBar } from "./TopBar";
-import { METRICS, NAV_SECTIONS, PENDING_APPROVALS } from "@/lib/demo-data";
+import { createClient } from "@/lib/supabase/server";
+import { approveCookApplication, rejectCookApplication, approveRiderApplication, rejectRiderApplication } from "@/lib/actions";
+import type { CookApplication, RiderApplication } from "@/lib/types-auth";
+import { NAV_SECTIONS, METRICS } from "@/lib/demo-data";
 
 /**
- * HQ app shell — foundation only (handover doc section 22-23).
+ * HQ dashboard — Feature #002 wiring.
  *
- * Real RBAC (Super Admin / Operations Admin / Support Admin) is Feature
- * #002. Each nav section here is a placeholder link — wiring them up to
- * real management screens is Feature #011 (Admin Control Center).
+ * Pending approvals below are REAL (from cook_applications /
+ * rider_applications), not demo data. Metrics cards (orders, revenue, etc)
+ * are still demo — those need Features #005-#010 (orders, subscriptions,
+ * complaints) to have real numbers to show.
  */
-export function HqDashboard() {
+export async function HqDashboard() {
+  const supabase = await createClient();
+
+  const [{ data: pendingCooks }, { data: pendingRiders }] = await Promise.all([
+    supabase
+      .from("cook_applications")
+      .select("*")
+      .eq("status", "pending")
+      .order("created_at", { ascending: true })
+      .returns<CookApplication[]>(),
+    supabase
+      .from("rider_applications")
+      .select("*")
+      .eq("status", "pending")
+      .order("created_at", { ascending: true })
+      .returns<RiderApplication[]>(),
+  ]);
+
+  const cooks = pendingCooks ?? [];
+  const riders = pendingRiders ?? [];
+  const totalPending = cooks.length + riders.length;
+
   return (
     <div className="min-h-screen md:flex" style={{ background: "var(--kb-navy)" }}>
       <aside
@@ -31,6 +57,9 @@ export function HqDashboard() {
               {s}
             </a>
           ))}
+          <Link href="/partners" className="block rounded-lg px-3 py-2 text-sm" style={{ color: "var(--kb-on-navy-soft)" }}>
+            Manage Partners
+          </Link>
         </nav>
       </aside>
 
@@ -47,24 +76,74 @@ export function HqDashboard() {
             </div>
           ))}
         </div>
+        <p className="mt-2 text-xs" style={{ color: "var(--kb-on-navy-soft)" }}>
+          Metrics above are placeholders — real numbers land with Features #005-#010 (orders, subscriptions, complaints).
+        </p>
 
-        <h2 className="mt-8 font-display text-lg font-bold" style={{ color: "var(--kb-on-navy)" }}>
-          Pending approvals
+        <h2 className="mt-6 font-display text-lg font-bold" style={{ color: "var(--kb-on-navy)" }}>
+          Pending approvals {totalPending > 0 && `(${totalPending})`}
         </h2>
-        <div className="mt-3 space-y-2">
-          {PENDING_APPROVALS.map((a) => (
-            <div key={a.id} className="flex items-center justify-between rounded-2xl bg-white p-4 shadow-lg" style={{ color: "var(--kb-ink)" }}>
-              <div>
-                <p className="text-sm font-semibold">{a.name}</p>
-                <p className="text-xs" style={{ color: "var(--kb-ink-soft)" }}>{a.type} &middot; submitted {a.submitted}</p>
+
+        {totalPending === 0 ? (
+          <p className="mt-3 rounded-2xl bg-white p-5 text-sm shadow-lg" style={{ color: "var(--kb-ink-soft)" }}>
+            No pending applications right now.
+          </p>
+        ) : (
+          <div className="mt-3 space-y-2">
+            {cooks.map((app) => (
+              <div key={app.id} className="rounded-2xl bg-white p-4 shadow-lg" style={{ color: "var(--kb-ink)" }}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold">{app.business_name}</p>
+                    <p className="text-xs" style={{ color: "var(--kb-ink-soft)" }}>
+                      Cook &middot; {app.business_type} &middot; {app.neighbourhood}
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <form action={approveCookApplication.bind(null, app.id, app.user_id)}>
+                      <button className="rounded-lg px-3 py-1.5 text-xs font-medium text-white" style={{ background: "var(--kb-green-deep)" }}>
+                        Approve
+                      </button>
+                    </form>
+                    <form action={rejectCookApplication.bind(null, app.id)}>
+                      <button className="rounded-lg px-3 py-1.5 text-xs font-medium" style={{ background: "var(--kb-cream)", color: "var(--kb-ink)" }}>
+                        Reject
+                      </button>
+                    </form>
+                  </div>
+                </div>
+                {app.description && (
+                  <p className="mt-2 text-xs" style={{ color: "var(--kb-ink-soft)" }}>{app.description}</p>
+                )}
               </div>
-              <div className="flex gap-2">
-                <button className="rounded-lg px-3 py-1.5 text-xs font-medium text-white" style={{ background: "var(--kb-green-deep)" }}>Approve</button>
-                <button className="rounded-lg px-3 py-1.5 text-xs font-medium" style={{ background: "var(--kb-cream)", color: "var(--kb-ink)" }}>Reject</button>
+            ))}
+
+            {riders.map((app) => (
+              <div key={app.id} className="rounded-2xl bg-white p-4 shadow-lg" style={{ color: "var(--kb-ink)" }}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold">Rider application</p>
+                    <p className="text-xs" style={{ color: "var(--kb-ink-soft)" }}>
+                      {app.vehicle_type} {app.license_plate && `\u00b7 ${app.license_plate}`}
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <form action={approveRiderApplication.bind(null, app.id, app.user_id)}>
+                      <button className="rounded-lg px-3 py-1.5 text-xs font-medium text-white" style={{ background: "var(--kb-green-deep)" }}>
+                        Approve
+                      </button>
+                    </form>
+                    <form action={rejectRiderApplication.bind(null, app.id)}>
+                      <button className="rounded-lg px-3 py-1.5 text-xs font-medium" style={{ background: "var(--kb-cream)", color: "var(--kb-ink)" }}>
+                        Reject
+                      </button>
+                    </form>
+                  </div>
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </main>
     </div>
   );
