@@ -25,13 +25,14 @@ export default async function PartnersPage() {
   const { data: partners } = await supabase
     .from("profiles")
     .select("*")
-    .in("role", ["cook", "rider"])
+    .in("role", ["cook", "rider", "picker"])
     .order("created_at", { ascending: false })
     .returns<Profile[]>();
 
   const list = partners ?? [];
   const cooks = list.filter((p) => p.role === "cook");
   const riders = list.filter((p) => p.role === "rider");
+  const pickers = list.filter((p) => p.role === "picker");
 
   return (
     <div className="min-h-screen px-4 py-6 sm:px-6" style={{ background: "var(--kb-navy)" }}>
@@ -72,6 +73,20 @@ export default async function PartnersPage() {
             </p>
           )}
           {riders.map((p) => (
+            <PartnerRow key={p.id} profile={p} />
+          ))}
+        </div>
+
+        <h2 className="mt-6 font-display text-lg font-bold" style={{ color: "var(--kb-on-navy)" }}>
+          Pickers ({pickers.length})
+        </h2>
+        <div className="mt-3 space-y-2">
+          {pickers.length === 0 && (
+            <p className="rounded-2xl bg-white p-4 text-sm shadow-lg" style={{ color: "var(--kb-ink-soft)" }}>
+              No approved pickers yet.
+            </p>
+          )}
+          {pickers.map((p) => (
             <PartnerRow key={p.id} profile={p} />
           ))}
         </div>

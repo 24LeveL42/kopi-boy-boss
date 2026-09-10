@@ -1,22 +1,21 @@
 import Link from "next/link";
 import { TopBar } from "./TopBar";
 import { createClient } from "@/lib/supabase/server";
-import { approveCookApplication, rejectCookApplication, approveRiderApplication, rejectRiderApplication } from "@/lib/actions";
-import type { CookApplication, RiderApplication } from "@/lib/types-auth";
+import {
+  approveCookApplication,
+  rejectCookApplication,
+  approveRiderApplication,
+  rejectRiderApplication,
+  approvePickerApplication,
+  rejectPickerApplication,
+} from "@/lib/actions";
+import type { CookApplication, RiderApplication, PickerApplication } from "@/lib/types-auth";
 import { NAV_SECTIONS, METRICS } from "@/lib/demo-data";
 
-/**
- * HQ dashboard — Feature #002 wiring.
- *
- * Pending approvals below are REAL (from cook_applications /
- * rider_applications), not demo data. Metrics cards (orders, revenue, etc)
- * are still demo — those need Features #005-#010 (orders, subscriptions,
- * complaints) to have real numbers to show.
- */
 export async function HqDashboard() {
   const supabase = await createClient();
 
-  const [{ data: pendingCooks }, { data: pendingRiders }] = await Promise.all([
+  const [{ data: pendingCooks }, { data: pendingRiders }, { data: pendingPickers }] = await Promise.all([
     supabase
       .from("cook_applications")
       .select("*")
@@ -29,11 +28,18 @@ export async function HqDashboard() {
       .eq("status", "pending")
       .order("created_at", { ascending: true })
       .returns<RiderApplication[]>(),
+    supabase
+      .from("picker_applications")
+      .select("*")
+      .eq("status", "pending")
+      .order("created_at", { ascending: true })
+      .returns<PickerApplication[]>(),
   ]);
 
   const cooks = pendingCooks ?? [];
   const riders = pendingRiders ?? [];
-  const totalPending = cooks.length + riders.length;
+  const pickers = pendingPickers ?? [];
+  const totalPending = cooks.length + riders.length + pickers.length;
 
   return (
     <div className="min-h-screen md:flex" style={{ background: "var(--kb-navy)" }}>
@@ -44,19 +50,19 @@ export async function HqDashboard() {
         <TopBar />
         <nav className="mt-6 space-y-1">
           {NAV_SECTIONS.map((s, i) => (
-            <a
-              key={s}
-              href="#"
-              className="block rounded-lg px-3 py-2 text-sm"
-              style={
-                i === 0
-                  ? { background: "var(--kb-navy-raised)", color: "var(--kb-on-navy)", fontWeight: 600 }
-                  : { color: "var(--kb-on-navy-soft)" }
-              }
-            >
-              {s}
-            </a>
-          ))}
+  <a
+    key={s}
+    href="#"
+    className="block rounded-lg px-3 py-2 text-sm"
+    style={
+      i === 0
+        ? { background: "var(--kb-navy-raised)", color: "var(--kb-on-navy)", fontWeight: 600 }
+        : { color: "var(--kb-on-navy-soft)" }
+    }
+  >
+    {s}
+  </a>
+))}
           <Link href="/partners" className="block rounded-lg px-3 py-2 text-sm" style={{ color: "var(--kb-on-navy-soft)" }}>
             Manage Partners
           </Link>
@@ -134,6 +140,31 @@ export async function HqDashboard() {
                       </button>
                     </form>
                     <form action={rejectRiderApplication.bind(null, app.id)}>
+                      <button className="rounded-lg px-3 py-1.5 text-xs font-medium" style={{ background: "var(--kb-cream)", color: "var(--kb-ink)" }}>
+                        Reject
+                      </button>
+                    </form>
+                  </div>
+                </div>
+              </div>
+            ))}
+
+            {pickers.map((app) => (
+              <div key={app.id} className="rounded-2xl bg-white p-4 shadow-lg" style={{ color: "var(--kb-ink)" }}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold">Picker application</p>
+                    {app.note && (
+                      <p className="text-xs" style={{ color: "var(--kb-ink-soft)" }}>{app.note}</p>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <form action={approvePickerApplication.bind(null, app.id, app.user_id)}>
+                      <button className="rounded-lg px-3 py-1.5 text-xs font-medium text-white" style={{ background: "var(--kb-green-deep)" }}>
+                        Approve
+                      </button>
+                    </form>
+                    <form action={rejectPickerApplication.bind(null, app.id)}>
                       <button className="rounded-lg px-3 py-1.5 text-xs font-medium" style={{ background: "var(--kb-cream)", color: "var(--kb-ink)" }}>
                         Reject
                       </button>
