@@ -69,4 +69,95 @@ export async function HqDashboard() {
         </p>
 
         <h2 className="mt-6 font-display text-lg font-bold" style={{ color: "var(--kb-on-navy)" }}>
-          Pending
+          Pending approvals {totalPending > 0 && `(${totalPending})`}
+        </h2>
+
+        {totalPending === 0 ? (
+          <p className="mt-3 rounded-2xl bg-white p-5 text-sm shadow-lg" style={{ color: "var(--kb-ink-soft)" }}>
+            No pending applications right now.
+          </p>
+        ) : (
+          <div className="mt-3 space-y-2">
+            {cooks.map((app) => (
+              <div key={app.id} className="rounded-2xl bg-white p-4 shadow-lg" style={{ color: "var(--kb-ink)" }}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold">{app.business_name}</p>
+                    <p className="text-xs" style={{ color: "var(--kb-ink-soft)" }}>
+                      Cook &middot; {app.business_type} &middot; {app.neighbourhood}
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <form action={approveCookApplication.bind(null, app.id, app.user_id)}>
+                      <button className="rounded-lg px-3 py-1.5 text-xs font-medium text-white" style={{ background: "var(--kb-green-deep)" }}>
+                        Approve
+                      </button>
+                    </form>
+                    <form action={rejectCookApplication.bind(null, app.id)}>
+                      <button className="rounded-lg px-3 py-1.5 text-xs font-medium" style={{ background: "var(--kb-cream)", color: "var(--kb-ink)" }}>
+                        Reject
+                      </button>
+                    </form>
+                  </div>
+                </div>
+                {app.description && (
+                  <p className="mt-2 text-xs" style={{ color: "var(--kb-ink-soft)" }}>{app.description}</p>
+                )}
+              </div>
+            ))}
+
+            {riders.map((app) => (
+              <div key={app.id} className="rounded-2xl bg-white p-4 shadow-lg" style={{ color: "var(--kb-ink)" }}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold">Rider application</p>
+                    <p className="text-xs" style={{ color: "var(--kb-ink-soft)" }}>
+                      {app.vehicle_type} {app.license_plate && `\u00b7 ${app.license_plate}`}
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <form action={approveRiderApplication.bind(null, app.id, app.user_id)}>
+                      <button className="rounded-lg px-3 py-1.5 text-xs font-medium text-white" style={{ background: "var(--kb-green-deep)" }}>
+                        Approve
+                      </button>
+                    </form>
+                    <form action={rejectRiderApplication.bind(null, app.id)}>
+                      <button className="rounded-lg px-3 py-1.5 text-xs font-medium" style={{ background: "var(--kb-cream)", color: "var(--kb-ink)" }}>
+                        Reject
+                      </button>
+                    </form>
+                  </div>
+                </div>
+              </div>
+            ))}
+
+            {pickers.map((app) => (
+              <div key={app.id} className="rounded-2xl bg-white p-4 shadow-lg" style={{ color: "var(--kb-ink)" }}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold">Picker application</p>
+                    {app.note && (
+                      <p className="text-xs" style={{ color: "var(--kb-ink-soft)" }}>{app.note}</p>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <form action={approvePickerApplication.bind(null, app.id, app.user_id)}>
+                      <button className="rounded-lg px-3 py-1.5 text-xs font-medium text-white" style={{ background: "var(--kb-green-deep)" }}>
+                        Approve
+                      </button>
+                    </form>
+                    <form action={rejectPickerApplication.bind(null, app.id)}>
+                      <button className="rounded-lg px-3 py-1.5 text-xs font-medium" style={{ background: "var(--kb-cream)", color: "var(--kb-ink)" }}>
+                        Reject
+                      </button>
+                    </form>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}
