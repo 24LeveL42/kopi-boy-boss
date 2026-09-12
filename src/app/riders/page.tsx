@@ -2,7 +2,7 @@ import { LoginForm } from "@/components/LoginForm";
 import { NotAuthorized } from "@/components/NotAuthorized";
 import { AdminShell } from "@/components/AdminShell";
 import { requireAdmin } from "@/lib/require-admin";
-import { setPartnerActive } from "@/lib/actions";
+import { setPartnerActive, deleteTestPartner } from "@/lib/actions";
 import type { Profile, RiderApplication } from "@/lib/types-auth";
 
 export default async function RidersPage() {
@@ -70,6 +70,14 @@ export default async function RidersPage() {
                         style={{ background: r.is_active ? "var(--kb-danger)" : "var(--kb-green-deep)" }}
                       >
                         {r.is_active ? "Block" : "Reinstate"}
+                      </button>
+                    </form>
+                    <form action={deleteTestPartner.bind(null, r.id, "rider")}>
+                      <button
+                        className="rounded-lg px-3 py-1.5 text-xs font-medium"
+                        style={{ background: "var(--kb-cream)", color: "var(--kb-danger)" }}
+                      >
+                        Delete
                       </button>
                     </form>
                   </div>

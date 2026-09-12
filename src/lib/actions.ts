@@ -110,3 +110,29 @@ export async function setPartnerActive(partnerId: string, isActive: boolean) {
   await supabase.from("profiles").update({ is_active: isActive }).eq("id", partnerId);
   revalidatePath("/partners");
 }
+/**
+ * Fully removes a test cook/rider/picker: their profile row plus any
+ * application, kitchen, and menu records tied to them, so they can go
+ * through apply -> approve from scratch. For testing only — this does
+ * not delete their actual Supabase Auth login, so they can sign back in
+ * and will land back on the sign-up flow.
+ */
+export async function deleteTestPartner(partnerId: string, role: "cook" | "rider" | "picker") {
+  const supabase = await createClient();
+
+  if (role === "cook") {
+    await supabase.from("menu_items").delete().eq("kitchen_id", partnerId);
+    await supabase.from("kitchens").delete().eq("id", partnerId);
+    await supabase.from("cook_applications").delete().eq("user_id", partnerId);
+  } else if (role === "rider") {
+    await supabase.from("rider_applications").delete().eq("user_id", partnerId);
+  } else if (role === "picker") {
+    await supabase.from("picker_applications").delete().eq("user_id", partnerId);
+  }
+
+  await supabase.from("profiles").delete().eq("id", partnerId);
+
+  revalidatePath("/partners");
+  revalidatePath("/merchants");
+  revalidatePath("/riders");
+}
