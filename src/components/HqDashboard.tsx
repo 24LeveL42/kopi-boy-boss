@@ -9,13 +9,18 @@ import {
   approvePickerApplication,
   rejectPickerApplication,
 } from "@/lib/actions";
-import type { CookApplication, RiderApplication, PickerApplication } from "@/lib/types-auth";
-import { METRICS } from "@/lib/demo-data";
+import type { CookApplication, RiderApplication, PickerApplication, Profile } from "@/lib/types-auth";
 
 export async function HqDashboard() {
   const supabase = await createClient();
 
-  const [{ data: pendingCooks }, { data: pendingRiders }, { data: pendingPickers }] = await Promise.all([
+  const [
+    { data: pendingCooks },
+    { data: pendingRiders },
+    { data: pendingPickers },
+    { count: activeMerchants },
+    { count: activeRiders },
+  ] = await Promise.all([
     supabase
       .from("cook_applications")
       .select("*")
@@ -34,12 +39,29 @@ export async function HqDashboard() {
       .eq("status", "pending")
       .order("created_at", { ascending: true })
       .returns<PickerApplication[]>(),
+    supabase
+      .from("profiles")
+      .select("*", { count: "exact", head: true })
+      .eq("role", "cook")
+      .eq("is_active", true),
+    supabase
+      .from("profiles")
+      .select("*", { count: "exact", head: true })
+      .eq("role", "rider")
+      .eq("is_active", true),
   ]);
 
   const cooks = pendingCooks ?? [];
   const riders = pendingRiders ?? [];
   const pickers = pendingPickers ?? [];
   const totalPending = cooks.length + riders.length + pickers.length;
+
+  // Pull applicant name/phone for every pending application in one query.
+  const applicantIds = [...cooks, ...riders, ...pickers].map((a) => a.user_id);
+  const { data: applicantProfiles } = applicantIds.length
+    ? await supabase.from("profiles").select("*").in("id", applicantIds).returns<Profile[]>()
+    : { data: [] as Profile[] };
+  const applicantById = new Map((applicantProfiles ?? []).map((p) => [p.id, p]));
 
   return (
     <div className="min-h-screen md:flex" style={{ background: "var(--kb-navy)" }}>
@@ -56,17 +78,20 @@ export async function HqDashboard() {
           Command Centre
         </h1>
 
-        <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-          {METRICS.map((m) => (
-            <div key={m.label} className="rounded-2xl bg-white p-4 shadow-lg" style={{ color: "var(--kb-ink)" }}>
-              <p className="text-xs" style={{ color: "var(--kb-ink-soft)" }}>{m.label}</p>
-              <p className="mt-1 text-2xl font-bold">{m.value}</p>
-            </div>
-          ))}
+        <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <div className="rounded-2xl bg-white p-4 shadow-lg" style={{ color: "var(--kb-ink)" }}>
+            <p className="text-xs" style={{ color: "var(--kb-ink-soft)" }}>Active merchants</p>
+            <p className="mt-1 text-2xl font-bold">{activeMerchants ?? 0}</p>
+          </div>
+          <div className="rounded-2xl bg-white p-4 shadow-lg" style={{ color: "var(--kb-ink)" }}>
+            <p className="text-xs" style={{ color: "var(--kb-ink-soft)" }}>Active riders</p>
+            <p className="mt-1 text-2xl font-bold">{activeRiders ?? 0}</p>
+          </div>
+          <div className="rounded-2xl bg-white p-4 shadow-lg" style={{ color: "var(--kb-ink)" }}>
+            <p className="text-xs" style={{ color: "var(--kb-ink-soft)" }}>Pending applications</p>
+            <p className="mt-1 text-2xl font-bold">{totalPending}</p>
+          </div>
         </div>
-        <p className="mt-2 text-xs" style={{ color: "var(--kb-on-navy-soft)" }}>
-          Metrics above are placeholders — real numbers land with Features #005-#010 (orders, subscriptions, complaints).
-        </p>
 
         <h2 className="mt-6 font-display text-lg font-bold" style={{ color: "var(--kb-on-navy)" }}>
           Pending approvals {totalPending > 0 && `(${totalPending})`}
@@ -78,83 +103,104 @@ export async function HqDashboard() {
           </p>
         ) : (
           <div className="mt-3 space-y-2">
-            {cooks.map((app) => (
-              <div key={app.id} className="rounded-2xl bg-white p-4 shadow-lg" style={{ color: "var(--kb-ink)" }}>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-semibold">{app.business_name}</p>
-                    <p className="text-xs" style={{ color: "var(--kb-ink-soft)" }}>
-                      Cook &middot; {app.business_type} &middot; {app.neighbourhood}
-                    </p>
+            {cooks.map((app) => {
+              const applicant = applicantById.get(app.user_id);
+              return (
+                <div key={app.id} className="rounded-2xl bg-white p-4 shadow-lg" style={{ color: "var(--kb-ink)" }}>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-semibold">{app.business_name}</p>
+                      <p className="text-xs" style={{ color: "var(--kb-ink-soft)" }}>
+                        Cook &middot; {app.business_type} &middot; {app.neighbourhood}
+                      </p>
+                      <p className="mt-1 text-xs font-medium" style={{ color: "var(--kb-ink)" }}>
+                        {applicant?.full_name || "(no name on file)"}
+                        {applicant?.phone && ` · ${applicant.phone}`}
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <form action={approveCookApplication.bind(null, app.id, app.user_id)}>
+                        <button className="rounded-lg px-3 py-1.5 text-xs font-medium text-white" style={{ background: "var(--kb-green-deep)" }}>
+                          Approve
+                        </button>
+                      </form>
+                      <form action={rejectCookApplication.bind(null, app.id)}>
+                        <button className="rounded-lg px-3 py-1.5 text-xs font-medium" style={{ background: "var(--kb-cream)", color: "var(--kb-ink)" }}>
+                          Reject
+                        </button>
+                      </form>
+                    </div>
                   </div>
-                  <div className="flex gap-2">
-                    <form action={approveCookApplication.bind(null, app.id, app.user_id)}>
-                      <button className="rounded-lg px-3 py-1.5 text-xs font-medium text-white" style={{ background: "var(--kb-green-deep)" }}>
-                        Approve
-                      </button>
-                    </form>
-                    <form action={rejectCookApplication.bind(null, app.id)}>
-                      <button className="rounded-lg px-3 py-1.5 text-xs font-medium" style={{ background: "var(--kb-cream)", color: "var(--kb-ink)" }}>
-                        Reject
-                      </button>
-                    </form>
-                  </div>
+                  {app.description && (
+                    <p className="mt-2 text-xs" style={{ color: "var(--kb-ink-soft)" }}>{app.description}</p>
+                  )}
                 </div>
-                {app.description && (
-                  <p className="mt-2 text-xs" style={{ color: "var(--kb-ink-soft)" }}>{app.description}</p>
-                )}
-              </div>
-            ))}
+              );
+            })}
 
-            {riders.map((app) => (
-              <div key={app.id} className="rounded-2xl bg-white p-4 shadow-lg" style={{ color: "var(--kb-ink)" }}>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-semibold">Rider application</p>
-                    <p className="text-xs" style={{ color: "var(--kb-ink-soft)" }}>
-                      {app.vehicle_type} {app.license_plate && `\u00b7 ${app.license_plate}`}
-                    </p>
-                  </div>
-                  <div className="flex gap-2">
-                    <form action={approveRiderApplication.bind(null, app.id, app.user_id)}>
-                      <button className="rounded-lg px-3 py-1.5 text-xs font-medium text-white" style={{ background: "var(--kb-green-deep)" }}>
-                        Approve
-                      </button>
-                    </form>
-                    <form action={rejectRiderApplication.bind(null, app.id)}>
-                      <button className="rounded-lg px-3 py-1.5 text-xs font-medium" style={{ background: "var(--kb-cream)", color: "var(--kb-ink)" }}>
-                        Reject
-                      </button>
-                    </form>
+            {riders.map((app) => {
+              const applicant = applicantById.get(app.user_id);
+              return (
+                <div key={app.id} className="rounded-2xl bg-white p-4 shadow-lg" style={{ color: "var(--kb-ink)" }}>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-semibold">Rider application</p>
+                      <p className="text-xs" style={{ color: "var(--kb-ink-soft)" }}>
+                        {app.vehicle_type} {app.license_plate && `\u00b7 ${app.license_plate}`}
+                      </p>
+                      <p className="mt-1 text-xs font-medium" style={{ color: "var(--kb-ink)" }}>
+                        {applicant?.full_name || "(no name on file)"}
+                        {applicant?.phone && ` · ${applicant.phone}`}
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <form action={approveRiderApplication.bind(null, app.id, app.user_id)}>
+                        <button className="rounded-lg px-3 py-1.5 text-xs font-medium text-white" style={{ background: "var(--kb-green-deep)" }}>
+                          Approve
+                        </button>
+                      </form>
+                      <form action={rejectRiderApplication.bind(null, app.id)}>
+                        <button className="rounded-lg px-3 py-1.5 text-xs font-medium" style={{ background: "var(--kb-cream)", color: "var(--kb-ink)" }}>
+                          Reject
+                        </button>
+                      </form>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
 
-            {pickers.map((app) => (
-              <div key={app.id} className="rounded-2xl bg-white p-4 shadow-lg" style={{ color: "var(--kb-ink)" }}>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-semibold">Picker application</p>
-                    {app.note && (
-                      <p className="text-xs" style={{ color: "var(--kb-ink-soft)" }}>{app.note}</p>
-                    )}
-                  </div>
-                  <div className="flex gap-2">
-                    <form action={approvePickerApplication.bind(null, app.id, app.user_id)}>
-                      <button className="rounded-lg px-3 py-1.5 text-xs font-medium text-white" style={{ background: "var(--kb-green-deep)" }}>
-                        Approve
-                      </button>
-                    </form>
-                    <form action={rejectPickerApplication.bind(null, app.id)}>
-                      <button className="rounded-lg px-3 py-1.5 text-xs font-medium" style={{ background: "var(--kb-cream)", color: "var(--kb-ink)" }}>
-                        Reject
-                      </button>
-                    </form>
+            {pickers.map((app) => {
+              const applicant = applicantById.get(app.user_id);
+              return (
+                <div key={app.id} className="rounded-2xl bg-white p-4 shadow-lg" style={{ color: "var(--kb-ink)" }}>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-semibold">Picker application</p>
+                      <p className="mt-1 text-xs font-medium" style={{ color: "var(--kb-ink)" }}>
+                        {applicant?.full_name || "(no name on file)"}
+                        {applicant?.phone && ` · ${applicant.phone}`}
+                      </p>
+                      {app.note && (
+                        <p className="mt-1 text-xs" style={{ color: "var(--kb-ink-soft)" }}>{app.note}</p>
+                      )}
+                    </div>
+                    <div className="flex gap-2">
+                      <form action={approvePickerApplication.bind(null, app.id, app.user_id)}>
+                        <button className="rounded-lg px-3 py-1.5 text-xs font-medium text-white" style={{ background: "var(--kb-green-deep)" }}>
+                          Approve
+                        </button>
+                      </form>
+                      <form action={rejectPickerApplication.bind(null, app.id)}>
+                        <button className="rounded-lg px-3 py-1.5 text-xs font-medium" style={{ background: "var(--kb-cream)", color: "var(--kb-ink)" }}>
+                          Reject
+                        </button>
+                      </form>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </main>
