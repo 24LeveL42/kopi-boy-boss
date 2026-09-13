@@ -4,6 +4,7 @@ import { NotAuthorized } from "@/components/NotAuthorized";
 import { AdminShell } from "@/components/AdminShell";
 import { requireAdmin } from "@/lib/require-admin";
 import { setPartnerActive, deleteTestPartner } from "@/lib/actions";
+import { ActionButton } from "@/components/ActionButton";
 import type { Profile, CookApplication } from "@/lib/types-auth";
 
 export default async function MerchantsPage() {
@@ -72,22 +73,20 @@ export default async function MerchantsPage() {
                     >
                       Edit
                     </Link>
-                    <form action={setPartnerActive.bind(null, m.id, !m.is_active)}>
-                      <button
-                        className="rounded-lg px-3 py-1.5 text-xs font-medium text-white"
-                        style={{ background: m.is_active ? "var(--kb-danger)" : "var(--kb-green-deep)" }}
-                      >
-                        {m.is_active ? "Block" : "Reinstate"}
-                      </button>
-                    </form>
-                    <form action={deleteTestPartner.bind(null, m.id, "cook")}>
-                      <button
-                        className="rounded-lg px-3 py-1.5 text-xs font-medium"
-                        style={{ background: "var(--kb-cream)", color: "var(--kb-danger)" }}
-                      >
-                        Delete
-                      </button>
-                    </form>
+                    <ActionButton
+                      action={() => setPartnerActive(m.id, !m.is_active)}
+                      label={m.is_active ? "Block" : "Reinstate"}
+                      pendingLabel="Saving…"
+                      background={m.is_active ? "var(--kb-danger)" : "var(--kb-green-deep)"}
+                    />
+                    <ActionButton
+                      action={() => deleteTestPartner(m.id, "cook")}
+                      label="Delete"
+                      pendingLabel="Deleting…"
+                      background="var(--kb-cream)"
+                      color="var(--kb-danger)"
+                      confirmMessage={`Delete ${m.full_name || "this partner"}? This removes their profile, application, and kitchen/menu data.`}
+                    />
                   </div>
                 </div>
                 {app?.description && (

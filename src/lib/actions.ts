@@ -14,15 +14,17 @@ async function setRoleUnlessAdmin(
   userId: string,
   newRole: "cook" | "rider" | "picker"
 ) {
-  const { data: existing } = await supabase
+  const { data: existing, error: readError } = await supabase
     .from("profiles")
     .select("role")
     .eq("id", userId)
     .single();
 
+  if (readError) throw new Error(`Couldn't check applicant's profile: ${readError.message}`);
   if (existing?.role === "admin") return;
 
-  await supabase.from("profiles").update({ role: newRole }).eq("id", userId);
+  const { error } = await supabase.from("profiles").update({ role: newRole }).eq("id", userId);
+  if (error) throw new Error(`Couldn't update role: ${error.message}`);
 }
 
 export async function approveCookApplication(applicationId: string, applicantUserId: string) {
@@ -30,17 +32,18 @@ export async function approveCookApplication(applicationId: string, applicantUse
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) return;
+  if (!user) throw new Error("Not signed in.");
 
-  await supabase
+  const { error } = await supabase
     .from("cook_applications")
     .update({ status: "approved", reviewed_by: user.id, reviewed_at: new Date().toISOString() })
     .eq("id", applicationId);
+  if (error) throw new Error(`Couldn't approve application: ${error.message}`);
 
   await setRoleUnlessAdmin(supabase, applicantUserId, "cook");
 
   revalidatePath("/");
-  revalidatePath("/applications");
+  revalidatePath("/merchants");
 }
 
 export async function rejectCookApplication(applicationId: string) {
@@ -48,15 +51,15 @@ export async function rejectCookApplication(applicationId: string) {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) return;
+  if (!user) throw new Error("Not signed in.");
 
-  await supabase
+  const { error } = await supabase
     .from("cook_applications")
     .update({ status: "rejected", reviewed_by: user.id, reviewed_at: new Date().toISOString() })
     .eq("id", applicationId);
+  if (error) throw new Error(`Couldn't reject application: ${error.message}`);
 
   revalidatePath("/");
-  revalidatePath("/applications");
 }
 
 export async function approveRiderApplication(applicationId: string, applicantUserId: string) {
@@ -64,17 +67,18 @@ export async function approveRiderApplication(applicationId: string, applicantUs
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) return;
+  if (!user) throw new Error("Not signed in.");
 
-  await supabase
+  const { error } = await supabase
     .from("rider_applications")
     .update({ status: "approved", reviewed_by: user.id, reviewed_at: new Date().toISOString() })
     .eq("id", applicationId);
+  if (error) throw new Error(`Couldn't approve application: ${error.message}`);
 
   await setRoleUnlessAdmin(supabase, applicantUserId, "rider");
 
   revalidatePath("/");
-  revalidatePath("/applications");
+  revalidatePath("/riders");
 }
 
 export async function rejectRiderApplication(applicationId: string) {
@@ -82,15 +86,15 @@ export async function rejectRiderApplication(applicationId: string) {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) return;
+  if (!user) throw new Error("Not signed in.");
 
-  await supabase
+  const { error } = await supabase
     .from("rider_applications")
     .update({ status: "rejected", reviewed_by: user.id, reviewed_at: new Date().toISOString() })
     .eq("id", applicationId);
+  if (error) throw new Error(`Couldn't reject application: ${error.message}`);
 
   revalidatePath("/");
-  revalidatePath("/applications");
 }
 
 export async function approvePickerApplication(applicationId: string, applicantUserId: string) {
@@ -98,17 +102,17 @@ export async function approvePickerApplication(applicationId: string, applicantU
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) return;
+  if (!user) throw new Error("Not signed in.");
 
-  await supabase
+  const { error } = await supabase
     .from("picker_applications")
     .update({ status: "approved", reviewed_by: user.id, reviewed_at: new Date().toISOString() })
     .eq("id", applicationId);
+  if (error) throw new Error(`Couldn't approve application: ${error.message}`);
 
   await setRoleUnlessAdmin(supabase, applicantUserId, "picker");
 
   revalidatePath("/");
-  revalidatePath("/applications");
 }
 
 export async function rejectPickerApplication(applicationId: string) {
@@ -116,22 +120,27 @@ export async function rejectPickerApplication(applicationId: string) {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) return;
+  if (!user) throw new Error("Not signed in.");
 
-  await supabase
+  const { error } = await supabase
     .from("picker_applications")
     .update({ status: "rejected", reviewed_by: user.id, reviewed_at: new Date().toISOString() })
     .eq("id", applicationId);
+  if (error) throw new Error(`Couldn't reject application: ${error.message}`);
 
   revalidatePath("/");
-  revalidatePath("/applications");
 }
 
 export async function setPartnerActive(partnerId: string, isActive: boolean) {
   const supabase = await createClient();
-  await supabase.from("profiles").update({ is_active: isActive }).eq("id", partnerId);
+  const { error } = await supabase.from("profiles").update({ is_active: isActive }).eq("id", partnerId);
+  if (error) throw new Error(`Couldn't update status: ${error.message}`);
+
   revalidatePath("/partners");
+  revalidatePath("/merchants");
+  revalidatePath("/riders");
 }
+
 /**
  * Fully removes a test cook/rider/picker: their profile row plus any
  * application, kitchen, and menu records tied to them, so they can go
@@ -143,16 +152,22 @@ export async function deleteTestPartner(partnerId: string, role: "cook" | "rider
   const supabase = await createClient();
 
   if (role === "cook") {
-    await supabase.from("menu_items").delete().eq("kitchen_id", partnerId);
-    await supabase.from("kitchens").delete().eq("id", partnerId);
-    await supabase.from("cook_applications").delete().eq("user_id", partnerId);
+    const { error: e1 } = await supabase.from("menu_items").delete().eq("kitchen_id", partnerId);
+    if (e1) throw new Error(`Couldn't delete menu items: ${e1.message}`);
+    const { error: e2 } = await supabase.from("kitchens").delete().eq("id", partnerId);
+    if (e2) throw new Error(`Couldn't delete kitchen: ${e2.message}`);
+    const { error: e3 } = await supabase.from("cook_applications").delete().eq("user_id", partnerId);
+    if (e3) throw new Error(`Couldn't delete application: ${e3.message}`);
   } else if (role === "rider") {
-    await supabase.from("rider_applications").delete().eq("user_id", partnerId);
+    const { error } = await supabase.from("rider_applications").delete().eq("user_id", partnerId);
+    if (error) throw new Error(`Couldn't delete application: ${error.message}`);
   } else if (role === "picker") {
-    await supabase.from("picker_applications").delete().eq("user_id", partnerId);
+    const { error } = await supabase.from("picker_applications").delete().eq("user_id", partnerId);
+    if (error) throw new Error(`Couldn't delete application: ${error.message}`);
   }
 
-  await supabase.from("profiles").delete().eq("id", partnerId);
+  const { error: profileError } = await supabase.from("profiles").delete().eq("id", partnerId);
+  if (profileError) throw new Error(`Couldn't delete profile: ${profileError.message}`);
 
   revalidatePath("/partners");
   revalidatePath("/merchants");

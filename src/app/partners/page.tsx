@@ -3,6 +3,7 @@ import { NotAuthorized } from "@/components/NotAuthorized";
 import { AdminShell } from "@/components/AdminShell";
 import { requireAdmin } from "@/lib/require-admin";
 import { setPartnerActive, deleteTestPartner } from "@/lib/actions";
+import { ActionButton } from "@/components/ActionButton";
 import type { Profile } from "@/lib/types-auth";
 
 export default async function PartnersPage() {
@@ -82,22 +83,20 @@ function PartnerRow({ profile }: { profile: Profile }) {
         </p>
       </div>
       <div className="flex items-center gap-2">
-        <form action={setPartnerActive.bind(null, profile.id, !profile.is_active)}>
-          <button
-            className="rounded-lg px-3 py-1.5 text-xs font-medium text-white"
-            style={{ background: profile.is_active ? "var(--kb-danger)" : "var(--kb-green-deep)" }}
-          >
-            {profile.is_active ? "Block" : "Reinstate"}
-          </button>
-        </form>
-        <form action={deleteTestPartner.bind(null, profile.id, profile.role as "cook" | "rider" | "picker")}>
-          <button
-            className="rounded-lg px-3 py-1.5 text-xs font-medium"
-            style={{ background: "var(--kb-cream)", color: "var(--kb-danger)" }}
-          >
-            Delete
-          </button>
-        </form>
+        <ActionButton
+          action={() => setPartnerActive(profile.id, !profile.is_active)}
+          label={profile.is_active ? "Block" : "Reinstate"}
+          pendingLabel="Saving…"
+          background={profile.is_active ? "var(--kb-danger)" : "var(--kb-green-deep)"}
+        />
+        <ActionButton
+          action={() => deleteTestPartner(profile.id, profile.role as "cook" | "rider" | "picker")}
+          label="Delete"
+          pendingLabel="Deleting…"
+          background="var(--kb-cream)"
+          color="var(--kb-danger)"
+          confirmMessage={`Delete ${profile.full_name || "this partner"}? This removes their profile, application, and kitchen/menu data.`}
+        />
       </div>
     </div>
   );

@@ -3,6 +3,7 @@ import { NotAuthorized } from "@/components/NotAuthorized";
 import { AdminShell } from "@/components/AdminShell";
 import { requireAdmin } from "@/lib/require-admin";
 import { setPartnerActive, deleteTestPartner } from "@/lib/actions";
+import { ActionButton } from "@/components/ActionButton";
 import type { Profile, RiderApplication } from "@/lib/types-auth";
 
 export default async function RidersPage() {
@@ -64,22 +65,20 @@ export default async function RidersPage() {
                     >
                       {r.is_active ? "Active" : "Blocked"}
                     </span>
-                    <form action={setPartnerActive.bind(null, r.id, !r.is_active)}>
-                      <button
-                        className="rounded-lg px-3 py-1.5 text-xs font-medium text-white"
-                        style={{ background: r.is_active ? "var(--kb-danger)" : "var(--kb-green-deep)" }}
-                      >
-                        {r.is_active ? "Block" : "Reinstate"}
-                      </button>
-                    </form>
-                    <form action={deleteTestPartner.bind(null, r.id, "rider")}>
-                      <button
-                        className="rounded-lg px-3 py-1.5 text-xs font-medium"
-                        style={{ background: "var(--kb-cream)", color: "var(--kb-danger)" }}
-                      >
-                        Delete
-                      </button>
-                    </form>
+                    <ActionButton
+                      action={() => setPartnerActive(r.id, !r.is_active)}
+                      label={r.is_active ? "Block" : "Reinstate"}
+                      pendingLabel="Saving…"
+                      background={r.is_active ? "var(--kb-danger)" : "var(--kb-green-deep)"}
+                    />
+                    <ActionButton
+                      action={() => deleteTestPartner(r.id, "rider")}
+                      label="Delete"
+                      pendingLabel="Deleting…"
+                      background="var(--kb-cream)"
+                      color="var(--kb-danger)"
+                      confirmMessage={`Delete ${r.full_name || "this partner"}? This removes their profile, application, and kitchen/menu data.`}
+                    />
                   </div>
                 </div>
               </div>

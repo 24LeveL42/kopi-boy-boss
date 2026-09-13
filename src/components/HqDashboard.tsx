@@ -10,6 +10,7 @@ import {
   rejectPickerApplication,
 } from "@/lib/actions";
 import type { CookApplication, RiderApplication, PickerApplication, Profile } from "@/lib/types-auth";
+import { ActionButton } from "./ActionButton";
 
 export async function HqDashboard() {
   const supabase = await createClient();
@@ -119,16 +120,19 @@ export async function HqDashboard() {
                       </p>
                     </div>
                     <div className="flex gap-2">
-                      <form action={approveCookApplication.bind(null, app.id, app.user_id)}>
-                        <button className="rounded-lg px-3 py-1.5 text-xs font-medium text-white" style={{ background: "var(--kb-green-deep)" }}>
-                          Approve
-                        </button>
-                      </form>
-                      <form action={rejectCookApplication.bind(null, app.id)}>
-                        <button className="rounded-lg px-3 py-1.5 text-xs font-medium" style={{ background: "var(--kb-cream)", color: "var(--kb-ink)" }}>
-                          Reject
-                        </button>
-                      </form>
+                      <ActionButton
+                        action={() => approveCookApplication(app.id, app.user_id)}
+                        label="Approve"
+                        pendingLabel="Approving…"
+                        background="var(--kb-green-deep)"
+                      />
+                      <ActionButton
+                        action={() => rejectCookApplication(app.id)}
+                        label="Reject"
+                        pendingLabel="Rejecting…"
+                        background="var(--kb-cream)"
+                        color="var(--kb-ink)"
+                      />
                     </div>
                   </div>
                   {app.description && (
@@ -154,16 +158,19 @@ export async function HqDashboard() {
                       </p>
                     </div>
                     <div className="flex gap-2">
-                      <form action={approveRiderApplication.bind(null, app.id, app.user_id)}>
-                        <button className="rounded-lg px-3 py-1.5 text-xs font-medium text-white" style={{ background: "var(--kb-green-deep)" }}>
-                          Approve
-                        </button>
-                      </form>
-                      <form action={rejectRiderApplication.bind(null, app.id)}>
-                        <button className="rounded-lg px-3 py-1.5 text-xs font-medium" style={{ background: "var(--kb-cream)", color: "var(--kb-ink)" }}>
-                          Reject
-                        </button>
-                      </form>
+                      <ActionButton
+                        action={() => approveRiderApplication(app.id, app.user_id)}
+                        label="Approve"
+                        pendingLabel="Approving…"
+                        background="var(--kb-green-deep)"
+                      />
+                      <ActionButton
+                        action={() => rejectRiderApplication(app.id)}
+                        label="Reject"
+                        pendingLabel="Rejecting…"
+                        background="var(--kb-cream)"
+                        color="var(--kb-ink)"
+                      />
                     </div>
                   </div>
                 </div>
@@ -186,16 +193,19 @@ export async function HqDashboard() {
                       )}
                     </div>
                     <div className="flex gap-2">
-                      <form action={approvePickerApplication.bind(null, app.id, app.user_id)}>
-                        <button className="rounded-lg px-3 py-1.5 text-xs font-medium text-white" style={{ background: "var(--kb-green-deep)" }}>
-                          Approve
-                        </button>
-                      </form>
-                      <form action={rejectPickerApplication.bind(null, app.id)}>
-                        <button className="rounded-lg px-3 py-1.5 text-xs font-medium" style={{ background: "var(--kb-cream)", color: "var(--kb-ink)" }}>
-                          Reject
-                        </button>
-                      </form>
+                      <ActionButton
+                        action={() => approvePickerApplication(app.id, app.user_id)}
+                        label="Approve"
+                        pendingLabel="Approving…"
+                        background="var(--kb-green-deep)"
+                      />
+                      <ActionButton
+                        action={() => rejectPickerApplication(app.id)}
+                        label="Reject"
+                        pendingLabel="Rejecting…"
+                        background="var(--kb-cream)"
+                        color="var(--kb-ink)"
+                      />
                     </div>
                   </div>
                 </div>
