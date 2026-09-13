@@ -121,13 +121,13 @@ export async function HqDashboard() {
                     </div>
                     <div className="flex gap-2">
                       <ActionButton
-                        action={() => approveCookApplication(app.id, app.user_id)}
+                        action={approveCookApplication.bind(null, app.id, app.user_id)}
                         label="Approve"
                         pendingLabel="Approving…"
                         background="var(--kb-green-deep)"
                       />
                       <ActionButton
-                        action={() => rejectCookApplication(app.id)}
+                        action={rejectCookApplication.bind(null, app.id)}
                         label="Reject"
                         pendingLabel="Rejecting…"
                         background="var(--kb-cream)"
@@ -159,13 +159,13 @@ export async function HqDashboard() {
                     </div>
                     <div className="flex gap-2">
                       <ActionButton
-                        action={() => approveRiderApplication(app.id, app.user_id)}
+                        action={approveRiderApplication.bind(null, app.id, app.user_id)}
                         label="Approve"
                         pendingLabel="Approving…"
                         background="var(--kb-green-deep)"
                       />
                       <ActionButton
-                        action={() => rejectRiderApplication(app.id)}
+                        action={rejectRiderApplication.bind(null, app.id)}
                         label="Reject"
                         pendingLabel="Rejecting…"
                         background="var(--kb-cream)"
@@ -194,13 +194,13 @@ export async function HqDashboard() {
                     </div>
                     <div className="flex gap-2">
                       <ActionButton
-                        action={() => approvePickerApplication(app.id, app.user_id)}
+                        action={approvePickerApplication.bind(null, app.id, app.user_id)}
                         label="Approve"
                         pendingLabel="Approving…"
                         background="var(--kb-green-deep)"
                       />
                       <ActionButton
-                        action={() => rejectPickerApplication(app.id)}
+                        action={rejectPickerApplication.bind(null, app.id)}
                         label="Reject"
                         pendingLabel="Rejecting…"
                         background="var(--kb-cream)"

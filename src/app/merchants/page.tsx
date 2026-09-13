@@ -74,13 +74,13 @@ export default async function MerchantsPage() {
                       Edit
                     </Link>
                     <ActionButton
-                      action={() => setPartnerActive(m.id, !m.is_active)}
+                      action={setPartnerActive.bind(null, m.id, !m.is_active)}
                       label={m.is_active ? "Block" : "Reinstate"}
                       pendingLabel="Saving…"
                       background={m.is_active ? "var(--kb-danger)" : "var(--kb-green-deep)"}
                     />
                     <ActionButton
-                      action={() => deleteTestPartner(m.id, "cook")}
+                      action={deleteTestPartner.bind(null, m.id, "cook")}
                       label="Delete"
                       pendingLabel="Deleting…"
                       background="var(--kb-cream)"

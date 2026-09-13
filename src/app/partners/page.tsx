@@ -84,13 +84,13 @@ function PartnerRow({ profile }: { profile: Profile }) {
       </div>
       <div className="flex items-center gap-2">
         <ActionButton
-          action={() => setPartnerActive(profile.id, !profile.is_active)}
+          action={setPartnerActive.bind(null, profile.id, !profile.is_active)}
           label={profile.is_active ? "Block" : "Reinstate"}
           pendingLabel="Saving…"
           background={profile.is_active ? "var(--kb-danger)" : "var(--kb-green-deep)"}
         />
         <ActionButton
-          action={() => deleteTestPartner(profile.id, profile.role as "cook" | "rider" | "picker")}
+          action={deleteTestPartner.bind(null, profile.id, profile.role as "cook" | "rider" | "picker")}
           label="Delete"
           pendingLabel="Deleting…"
           background="var(--kb-cream)"

@@ -10,7 +10,7 @@ export function ActionButton({
   color,
   confirmMessage,
 }: {
-  action: () => Promise<void>;
+  action: (...args: never[]) => Promise<void>;
   label: string;
   pendingLabel?: string;
   background: string;

@@ -66,13 +66,13 @@ export default async function RidersPage() {
                       {r.is_active ? "Active" : "Blocked"}
                     </span>
                     <ActionButton
-                      action={() => setPartnerActive(r.id, !r.is_active)}
+                      action={setPartnerActive.bind(null, r.id, !r.is_active)}
                       label={r.is_active ? "Block" : "Reinstate"}
                       pendingLabel="Saving…"
                       background={r.is_active ? "var(--kb-danger)" : "var(--kb-green-deep)"}
                     />
                     <ActionButton
-                      action={() => deleteTestPartner(r.id, "rider")}
+                      action={deleteTestPartner.bind(null, r.id, "rider")}
                       label="Delete"
                       pendingLabel="Deleting…"
                       background="var(--kb-cream)"
