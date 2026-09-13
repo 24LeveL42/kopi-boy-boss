@@ -156,3 +156,305 @@ $$ language plpgsql security definer set search_path = public;
 create trigger before_profile_update
   before update on public.profiles
   for each row execute function public.protect_profile_privileges();
+
+
+-- ============================================================================
+-- KOPI BOY 2.0 — Feature #003: Merchant Onboarding (Kitchen + Menu)
+-- Run this ONCE, after the Feature #002 script above, in the same Supabase
+-- project's SQL Editor.
+-- ============================================================================
+
+-- ----------------------------------------------------------------------------
+-- 6. KITCHENS
+-- One row per approved cook — the merchant-facing profile shown in the
+-- Customer app marketplace. Created/edited by the cook themselves via the
+-- Partner app's kitchen setup screen, not by HQ. id = the cook's own
+-- profiles.id (one kitchen per cook).
+-- ----------------------------------------------------------------------------
+create table public.kitchens (
+  id uuid primary key references public.profiles(id) on delete cascade,
+  business_name text not null,
+  category text not null check (category in ('home-cook', 'hawker', 'bakery', 'bulk-orders', 'drinks')),
+  cuisine_type text not null check (cuisine_type in ('chinese', 'halal', 'indian', 'western')),
+  neighbourhood text not null,
+  description text,
+  hero_image text, -- optional per the handover doc ("a food photo is optional"); Customer app falls back to a category image when null
+  is_live boolean not null default false, -- flips true once the cook has saved at least one menu item (enforced in app logic, not here)
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.kitchens enable row level security;
+
+create policy "Cooks can read their own kitchen"
+  on public.kitchens for select
+  using (auth.uid() = id);
+
+create policy "Cooks can insert their own kitchen"
+  on public.kitchens for insert
+  with check (auth.uid() = id and exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'cook'));
+
+create policy "Cooks can update their own kitchen"
+  on public.kitchens for update
+  using (auth.uid() = id);
+
+create policy "Anyone can read live kitchens"
+  on public.kitchens for select
+  using (is_live = true);
+
+create policy "Admins can read every kitchen"
+  on public.kitchens for select
+  using (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin'));
+
+-- ----------------------------------------------------------------------------
+-- 7. MENU ITEMS
+-- Section: "menu items and price tags are mandatory; a food photo is
+-- optional." One row per dish. The Partner app replaces all of a kitchen's
+-- rows on every save (see KitchenSetupForm) rather than diffing — simplest
+-- correct approach for this feature's scope.
+-- ----------------------------------------------------------------------------
+create table public.menu_items (
+  id uuid primary key default gen_random_uuid(),
+  kitchen_id uuid not null references public.kitchens(id) on delete cascade,
+  name text not null,
+  price numeric(6,2) not null check (price > 0),
+  photo_url text,
+  created_at timestamptz not null default now()
+);
+
+alter table public.menu_items enable row level security;
+
+create policy "Cooks can manage their own menu items"
+  on public.menu_items for all
+  using (auth.uid() = kitchen_id)
+  with check (auth.uid() = kitchen_id);
+
+create policy "Anyone can read menu items of a live kitchen"
+  on public.menu_items for select
+  using (exists (select 1 from public.kitchens k where k.id = menu_items.kitchen_id and k.is_live = true));
+
+-- ----------------------------------------------------------------------------
+-- 8. KEEP updated_at CURRENT ON KITCHENS
+-- ----------------------------------------------------------------------------
+create function public.touch_kitchen_updated_at()
+returns trigger as $$
+begin
+  new.updated_at := now();
+  return new;
+end;
+$$ language plpgsql;
+
+create trigger before_kitchen_update
+  before update on public.kitchens
+  for each row execute function public.touch_kitchen_updated_at();
+
+
+-- ============================================================================
+-- KOPI BOY 2.0 — Picker role (optional pickup helper for riders)
+-- Run this ONCE, after the Feature #002 and #003 scripts above, in the same
+-- Supabase project's SQL Editor.
+-- ============================================================================
+
+-- ----------------------------------------------------------------------------
+-- 9. ALLOW 'picker' AS A PROFILE ROLE
+-- Postgres won't let you edit a check constraint in place, so it's
+-- drop-and-recreate. If this fails because your constraint has a different
+-- auto-generated name, find it first with:
+--   select conname from pg_constraint where conrelid = 'public.profiles'::regclass and contype = 'c';
+-- ----------------------------------------------------------------------------
+alter table public.profiles drop constraint profiles_role_check;
+alter table public.profiles add constraint profiles_role_check
+  check (role in ('customer', 'cook', 'rider', 'picker', 'admin'));
+
+-- ----------------------------------------------------------------------------
+-- 10. PICKER APPLICATIONS
+-- Same register -> submit -> review -> approve/reject pattern as cook/rider
+-- applications. Deliberately minimal fields — this role is meant for
+-- students/anyone nearby wanting casual pocket money, not a vetted fleet.
+-- ----------------------------------------------------------------------------
+create table public.picker_applications (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  note text, -- optional: why they want to pick up orders, anything relevant
+  status text not null default 'pending' check (status in ('pending', 'approved', 'rejected')),
+  reviewed_by uuid references auth.users(id),
+  reviewed_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+alter table public.picker_applications enable row level security;
+
+create policy "Applicants can read their own picker application"
+  on public.picker_applications for select
+  using (auth.uid() = user_id);
+
+create policy "Applicants can submit a picker application"
+  on public.picker_applications for insert
+  with check (auth.uid() = user_id);
+
+create policy "Admins can read every picker application"
+  on public.picker_applications for select
+  using (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin'));
+
+create policy "Admins can update every picker application"
+  on public.picker_applications for update
+  using (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin'));
+
+-- ----------------------------------------------------------------------------
+-- 11. PICKUP REQUESTS
+-- The rider-initiated, picker-fulfilled handshake described in the picker
+-- workflow: rider requests a picker for a specific kitchen pickup -> any
+-- approved picker can accept -> picker collects from the cook -> picker
+-- hands off to the rider and marks it complete. Payment (rider pays picker)
+-- happens off-platform, same as every other money leg in Kopi Boy —
+-- suggested_fee is a default the app shows, not an enforced amount.
+--
+-- NOTE: not yet linked to a real orders/deliveries table since #005/#006/#008
+-- haven't shipped. kitchen_id is enough to make the full accept/collect/
+-- handoff loop testable now; link it to a real delivery_id once that table
+-- exists.
+-- ----------------------------------------------------------------------------
+create table public.pickup_requests (
+  id uuid primary key default gen_random_uuid(),
+  rider_id uuid not null references public.profiles(id) on delete cascade,
+  kitchen_id uuid not null references public.kitchens(id) on delete cascade,
+  picker_id uuid references public.profiles(id),
+  status text not null default 'open' check (status in ('open', 'accepted', 'completed', 'cancelled')),
+  suggested_fee numeric(5,2) not null default 2.00,
+  created_at timestamptz not null default now(),
+  accepted_at timestamptz,
+  completed_at timestamptz
+);
+
+alter table public.pickup_requests enable row level security;
+
+create policy "Riders can create their own pickup requests"
+  on public.pickup_requests for insert
+  with check (auth.uid() = rider_id);
+
+create policy "Riders can read their own pickup requests"
+  on public.pickup_requests for select
+  using (auth.uid() = rider_id);
+
+create policy "Riders can cancel their own open pickup requests"
+  on public.pickup_requests for update
+  using (auth.uid() = rider_id and status = 'open')
+  with check (auth.uid() = rider_id and status = 'cancelled');
+
+create policy "Pickers can read open pickup requests"
+  on public.pickup_requests for select
+  using (
+    status = 'open'
+    and exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'picker')
+  );
+
+create policy "Pickers can read their assigned pickup requests"
+  on public.pickup_requests for select
+  using (auth.uid() = picker_id);
+
+create policy "Pickers can accept an open pickup request"
+  on public.pickup_requests for update
+  using (
+    status = 'open'
+    and exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'picker')
+  )
+  with check (picker_id = auth.uid() and status = 'accepted');
+
+create policy "Pickers can complete their assigned pickup request"
+  on public.pickup_requests for update
+  using (auth.uid() = picker_id)
+  with check (auth.uid() = picker_id);
+
+create policy "Admins can read every pickup request"
+  on public.pickup_requests for select
+  using (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin'));
+
+create policy "Admins can update every pickup request"
+  on public.pickup_requests for update
+  using (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin'));
+
+
+-- ============================================================================
+-- KOPI BOY 2.0 — Feature #005: Cart + Order Creation
+-- Run this ONCE, after the Feature #002/#003 and picker-role scripts above,
+-- in the same Supabase project's SQL Editor.
+-- ============================================================================
+
+-- ----------------------------------------------------------------------------
+-- 12. ORDERS
+-- One row per placed order. The app's checkout server action re-fetches real
+-- menu_items prices and computes subtotal itself — never trust a
+-- client-supplied total. status is deliberately a single-value enum for
+-- now ('placed'); #006 (cook accept/reject + PayNow) adds the rest of the
+-- state machine and the update policies needed to move an order through it.
+-- No delivery_fee column yet — that's #007; subtotal is the whole total
+-- until then.
+-- ----------------------------------------------------------------------------
+create table public.orders (
+  id uuid primary key default gen_random_uuid(),
+  customer_id uuid not null references public.profiles(id) on delete cascade,
+  kitchen_id uuid not null references public.kitchens(id) on delete cascade,
+  status text not null default 'placed' check (status in ('placed')),
+  subtotal numeric(7,2) not null check (subtotal > 0),
+  created_at timestamptz not null default now()
+);
+
+alter table public.orders enable row level security;
+
+create policy "Customers can create their own orders"
+  on public.orders for insert
+  with check (auth.uid() = customer_id);
+
+create policy "Customers can read their own orders"
+  on public.orders for select
+  using (auth.uid() = customer_id);
+
+create policy "Cooks can read orders placed at their kitchen"
+  on public.orders for select
+  using (auth.uid() = kitchen_id);
+
+create policy "Admins can read every order"
+  on public.orders for select
+  using (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin'));
+
+-- ----------------------------------------------------------------------------
+-- 13. ORDER ITEMS
+-- One row per line item. name/price are snapshotted at order time (copied
+-- from menu_items, not joined live) so a later menu edit or deletion never
+-- rewrites what a customer actually ordered and was charged for. The Partner
+-- app's KitchenSetupForm replaces a kitchen's menu_items wholesale on every
+-- save, so menu_item_id is set null (not cascaded) if the original row is
+-- gone — the snapshot is what matters for order history.
+-- ----------------------------------------------------------------------------
+create table public.order_items (
+  id uuid primary key default gen_random_uuid(),
+  order_id uuid not null references public.orders(id) on delete cascade,
+  menu_item_id uuid references public.menu_items(id) on delete set null,
+  name text not null,
+  price numeric(6,2) not null check (price > 0),
+  quantity int not null check (quantity > 0)
+);
+
+alter table public.order_items enable row level security;
+
+create policy "Customers can create items on their own orders"
+  on public.order_items for insert
+  with check (
+    exists (select 1 from public.orders o where o.id = order_items.order_id and o.customer_id = auth.uid())
+  );
+
+create policy "Customers can read items on their own orders"
+  on public.order_items for select
+  using (
+    exists (select 1 from public.orders o where o.id = order_items.order_id and o.customer_id = auth.uid())
+  );
+
+create policy "Cooks can read items on orders placed at their kitchen"
+  on public.order_items for select
+  using (
+    exists (select 1 from public.orders o where o.id = order_items.order_id and o.kitchen_id = auth.uid())
+  );
+
+create policy "Admins can read every order item"
+  on public.order_items for select
+  using (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin'));
