@@ -384,18 +384,26 @@ create policy "Admins can update every pickup request"
 -- 12. ORDERS
 -- One row per placed order. The app's checkout server action re-fetches real
 -- menu_items prices and computes subtotal itself — never trust a
--- client-supplied total. status is deliberately a single-value enum for
--- now ('placed'); #006 (cook accept/reject + PayNow) adds the rest of the
--- state machine and the update policies needed to move an order through it.
--- No delivery_fee column yet — that's #007; subtotal is the whole total
--- until then.
+-- client-supplied total. No delivery_fee column yet — that's #007;
+-- subtotal is the whole total until then.
+--
+-- order_status and payment_status are deliberately separate columns, per
+-- the locked business rule that order/payment/preparation/delivery/incident
+-- are separate status fields, not one combined enum (see docs/feature-001.md).
+-- Feature #006 (cook accept/reject + PayNow) is what actually moves these:
+-- a cook accepts/rejects (order_status), then separately marks payment_status
+-- 'paid' once they've received the PayNow transfer off-platform — same
+-- trust-based, no-in-app-gateway pattern already used for rider-pays-picker.
 -- ----------------------------------------------------------------------------
 create table public.orders (
   id uuid primary key default gen_random_uuid(),
   customer_id uuid not null references public.profiles(id) on delete cascade,
   kitchen_id uuid not null references public.kitchens(id) on delete cascade,
-  status text not null default 'placed' check (status in ('placed')),
+  order_status text not null default 'placed' check (order_status in ('placed', 'accepted', 'rejected')),
+  payment_status text not null default 'unpaid' check (payment_status in ('unpaid', 'paid')),
   subtotal numeric(7,2) not null check (subtotal > 0),
+  decided_at timestamptz, -- set when order_status moves to accepted/rejected
+  paid_at timestamptz, -- set when payment_status moves to paid
   created_at timestamptz not null default now()
 );
 
@@ -412,6 +420,15 @@ create policy "Customers can read their own orders"
 create policy "Cooks can read orders placed at their kitchen"
   on public.orders for select
   using (auth.uid() = kitchen_id);
+
+-- Transition rules (can't decide an already-decided order, can't mark paid
+-- before accepted) are enforced by the app's update calls including the
+-- expected current state in their WHERE clause, not by this policy — same
+-- "first to accept wins" level of rigor already used for pickup_requests.
+create policy "Cooks can update orders placed at their kitchen"
+  on public.orders for update
+  using (auth.uid() = kitchen_id)
+  with check (auth.uid() = kitchen_id);
 
 create policy "Admins can read every order"
   on public.orders for select
@@ -458,3 +475,35 @@ create policy "Cooks can read items on orders placed at their kitchen"
 create policy "Admins can read every order item"
   on public.order_items for select
   using (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin'));
+
+
+-- ============================================================================
+-- KOPI BOY 2.0 — Feature #006: Cook Accept/Reject + PayNow
+-- Run this ONCE, after every script above, in the same Supabase project's
+-- SQL Editor. (The order_status/payment_status split lives inside the #005
+-- section above rather than as an ALTER here, since that migration hadn't
+-- been run anywhere yet when #006 started.)
+-- ============================================================================
+
+-- ----------------------------------------------------------------------------
+-- 14. PAYNOW DETAILS ON KITCHENS
+-- Previously only captured once on cook_applications (immutable after that
+-- one-time form). Moved to kitchens — the live, cook-editable merchant
+-- profile — so a customer has somewhere current to read it from once their
+-- order is accepted, and a cook can update it later via the Partner app's
+-- KitchenSetupForm. Backfilled below from each cook's most recently
+-- approved application; the existing "Cooks can update their own kitchen" /
+-- "Anyone can read live kitchens" policies already cover this column, no
+-- new RLS needed.
+-- ----------------------------------------------------------------------------
+alter table public.kitchens add column paynow_uen text;
+
+update public.kitchens k
+set paynow_uen = (
+  select ca.paynow_uen
+  from public.cook_applications ca
+  where ca.user_id = k.id and ca.status = 'approved'
+  order by ca.reviewed_at desc nulls last
+  limit 1
+)
+where k.paynow_uen is null;
