@@ -3,6 +3,28 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 
+/**
+ * Approving an application always sets profiles.role to the new role.
+ * If the admin happens to be testing with their own admin account (or
+ * anyone else marked admin), this used to silently overwrite their
+ * admin access. This guard skips the role change in that one case.
+ */
+async function setRoleUnlessAdmin(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  newRole: "cook" | "rider" | "picker"
+) {
+  const { data: existing } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", userId)
+    .single();
+
+  if (existing?.role === "admin") return;
+
+  await supabase.from("profiles").update({ role: newRole }).eq("id", userId);
+}
+
 export async function approveCookApplication(applicationId: string, applicantUserId: string) {
   const supabase = await createClient();
   const {
@@ -15,7 +37,7 @@ export async function approveCookApplication(applicationId: string, applicantUse
     .update({ status: "approved", reviewed_by: user.id, reviewed_at: new Date().toISOString() })
     .eq("id", applicationId);
 
-  await supabase.from("profiles").update({ role: "cook" }).eq("id", applicantUserId);
+  await setRoleUnlessAdmin(supabase, applicantUserId, "cook");
 
   revalidatePath("/");
   revalidatePath("/applications");
@@ -49,7 +71,7 @@ export async function approveRiderApplication(applicationId: string, applicantUs
     .update({ status: "approved", reviewed_by: user.id, reviewed_at: new Date().toISOString() })
     .eq("id", applicationId);
 
-  await supabase.from("profiles").update({ role: "rider" }).eq("id", applicantUserId);
+  await setRoleUnlessAdmin(supabase, applicantUserId, "rider");
 
   revalidatePath("/");
   revalidatePath("/applications");
@@ -83,7 +105,7 @@ export async function approvePickerApplication(applicationId: string, applicantU
     .update({ status: "approved", reviewed_by: user.id, reviewed_at: new Date().toISOString() })
     .eq("id", applicationId);
 
-  await supabase.from("profiles").update({ role: "picker" }).eq("id", applicantUserId);
+  await setRoleUnlessAdmin(supabase, applicantUserId, "picker");
 
   revalidatePath("/");
   revalidatePath("/applications");
