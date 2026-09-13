@@ -2,6 +2,11 @@
 -- KOPI BOY 2.0 — Feature #002: Auth + Roles
 -- Run this ONCE in your Supabase project's SQL Editor (Dashboard > SQL Editor
 -- > New query > paste this whole file > Run).
+--
+-- Safe to re-run: every statement below is idempotent (CREATE TABLE IF NOT
+-- EXISTS, DROP POLICY/TRIGGER IF EXISTS before CREATE, CREATE OR REPLACE for
+-- functions, IF EXISTS/IF NOT EXISTS on ALTER statements). Running this whole
+-- file again on a database that already has some or all of it is safe.
 -- ============================================================================
 
 -- ----------------------------------------------------------------------------
@@ -10,7 +15,7 @@
 -- trigger at the bottom of this file — never insert into this table directly
 -- from the app.
 -- ----------------------------------------------------------------------------
-create table public.profiles (
+create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   role text not null default 'customer' check (role in ('customer', 'cook', 'rider', 'admin')),
   full_name text,
@@ -24,6 +29,7 @@ create table public.profiles (
 
 alter table public.profiles enable row level security;
 
+drop policy if exists "Users can read their own profile" on public.profiles;
 create policy "Users can read their own profile"
   on public.profiles for select
   using (auth.uid() = id);
@@ -31,14 +37,17 @@ create policy "Users can read their own profile"
 -- Users can update their own row, but a trigger (below) silently protects
 -- role/is_active from being changed by anyone except an admin — otherwise
 -- this policy alone would let a user grant themselves admin access.
+drop policy if exists "Users can update their own profile" on public.profiles;
 create policy "Users can update their own profile"
   on public.profiles for update
   using (auth.uid() = id);
 
+drop policy if exists "Admins can read every profile" on public.profiles;
 create policy "Admins can read every profile"
   on public.profiles for select
   using (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin'));
 
+drop policy if exists "Admins can update every profile" on public.profiles;
 create policy "Admins can update every profile"
   on public.profiles for update
   using (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin'));
@@ -47,7 +56,7 @@ create policy "Admins can update every profile"
 -- 2. COOK APPLICATIONS
 -- Section 20 of the handover doc: register -> submit -> review -> approve/reject.
 -- ----------------------------------------------------------------------------
-create table public.cook_applications (
+create table if not exists public.cook_applications (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   business_name text not null,
@@ -63,18 +72,22 @@ create table public.cook_applications (
 
 alter table public.cook_applications enable row level security;
 
+drop policy if exists "Applicants can read their own cook application" on public.cook_applications;
 create policy "Applicants can read their own cook application"
   on public.cook_applications for select
   using (auth.uid() = user_id);
 
+drop policy if exists "Applicants can submit a cook application" on public.cook_applications;
 create policy "Applicants can submit a cook application"
   on public.cook_applications for insert
   with check (auth.uid() = user_id);
 
+drop policy if exists "Admins can read every cook application" on public.cook_applications;
 create policy "Admins can read every cook application"
   on public.cook_applications for select
   using (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin'));
 
+drop policy if exists "Admins can update every cook application" on public.cook_applications;
 create policy "Admins can update every cook application"
   on public.cook_applications for update
   using (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin'));
@@ -84,7 +97,7 @@ create policy "Admins can update every cook application"
 -- Section 10/21: free registration, but must be approved before accepting
 -- deliveries.
 -- ----------------------------------------------------------------------------
-create table public.rider_applications (
+create table if not exists public.rider_applications (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   vehicle_type text, -- e.g. "Bicycle", "Motorcycle", "Car"
@@ -97,18 +110,22 @@ create table public.rider_applications (
 
 alter table public.rider_applications enable row level security;
 
+drop policy if exists "Applicants can read their own rider application" on public.rider_applications;
 create policy "Applicants can read their own rider application"
   on public.rider_applications for select
   using (auth.uid() = user_id);
 
+drop policy if exists "Applicants can submit a rider application" on public.rider_applications;
 create policy "Applicants can submit a rider application"
   on public.rider_applications for insert
   with check (auth.uid() = user_id);
 
+drop policy if exists "Admins can read every rider application" on public.rider_applications;
 create policy "Admins can read every rider application"
   on public.rider_applications for select
   using (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin'));
 
+drop policy if exists "Admins can update every rider application" on public.rider_applications;
 create policy "Admins can update every rider application"
   on public.rider_applications for update
   using (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin'));
@@ -120,7 +137,7 @@ create policy "Admins can update every rider application"
 -- approved application (handled in application-approval logic later, Feature
 -- #003), never by editing their own profile row directly.
 -- ----------------------------------------------------------------------------
-create function public.handle_new_user()
+create or replace function public.handle_new_user()
 returns trigger as $$
 begin
   insert into public.profiles (id, full_name)
@@ -129,6 +146,7 @@ begin
 end;
 $$ language plpgsql security definer set search_path = public;
 
+drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
@@ -142,7 +160,7 @@ create trigger on_auth_user_created
 -- reverts those two columns to their previous value unless the person
 -- making the change is already an admin.
 -- ----------------------------------------------------------------------------
-create function public.protect_profile_privileges()
+create or replace function public.protect_profile_privileges()
 returns trigger as $$
 begin
   if not exists (select 1 from public.profiles where id = auth.uid() and role = 'admin') then
@@ -153,6 +171,7 @@ begin
 end;
 $$ language plpgsql security definer set search_path = public;
 
+drop trigger if exists before_profile_update on public.profiles;
 create trigger before_profile_update
   before update on public.profiles
   for each row execute function public.protect_profile_privileges();
@@ -171,7 +190,7 @@ create trigger before_profile_update
 -- Partner app's kitchen setup screen, not by HQ. id = the cook's own
 -- profiles.id (one kitchen per cook).
 -- ----------------------------------------------------------------------------
-create table public.kitchens (
+create table if not exists public.kitchens (
   id uuid primary key references public.profiles(id) on delete cascade,
   business_name text not null,
   category text not null check (category in ('home-cook', 'hawker', 'bakery', 'bulk-orders', 'drinks')),
@@ -186,22 +205,27 @@ create table public.kitchens (
 
 alter table public.kitchens enable row level security;
 
+drop policy if exists "Cooks can read their own kitchen" on public.kitchens;
 create policy "Cooks can read their own kitchen"
   on public.kitchens for select
   using (auth.uid() = id);
 
+drop policy if exists "Cooks can insert their own kitchen" on public.kitchens;
 create policy "Cooks can insert their own kitchen"
   on public.kitchens for insert
   with check (auth.uid() = id and exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'cook'));
 
+drop policy if exists "Cooks can update their own kitchen" on public.kitchens;
 create policy "Cooks can update their own kitchen"
   on public.kitchens for update
   using (auth.uid() = id);
 
+drop policy if exists "Anyone can read live kitchens" on public.kitchens;
 create policy "Anyone can read live kitchens"
   on public.kitchens for select
   using (is_live = true);
 
+drop policy if exists "Admins can read every kitchen" on public.kitchens;
 create policy "Admins can read every kitchen"
   on public.kitchens for select
   using (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin'));
@@ -213,7 +237,7 @@ create policy "Admins can read every kitchen"
 -- rows on every save (see KitchenSetupForm) rather than diffing — simplest
 -- correct approach for this feature's scope.
 -- ----------------------------------------------------------------------------
-create table public.menu_items (
+create table if not exists public.menu_items (
   id uuid primary key default gen_random_uuid(),
   kitchen_id uuid not null references public.kitchens(id) on delete cascade,
   name text not null,
@@ -224,11 +248,13 @@ create table public.menu_items (
 
 alter table public.menu_items enable row level security;
 
+drop policy if exists "Cooks can manage their own menu items" on public.menu_items;
 create policy "Cooks can manage their own menu items"
   on public.menu_items for all
   using (auth.uid() = kitchen_id)
   with check (auth.uid() = kitchen_id);
 
+drop policy if exists "Anyone can read menu items of a live kitchen" on public.menu_items;
 create policy "Anyone can read menu items of a live kitchen"
   on public.menu_items for select
   using (exists (select 1 from public.kitchens k where k.id = menu_items.kitchen_id and k.is_live = true));
@@ -236,7 +262,7 @@ create policy "Anyone can read menu items of a live kitchen"
 -- ----------------------------------------------------------------------------
 -- 8. KEEP updated_at CURRENT ON KITCHENS
 -- ----------------------------------------------------------------------------
-create function public.touch_kitchen_updated_at()
+create or replace function public.touch_kitchen_updated_at()
 returns trigger as $$
 begin
   new.updated_at := now();
@@ -244,6 +270,7 @@ begin
 end;
 $$ language plpgsql;
 
+drop trigger if exists before_kitchen_update on public.kitchens;
 create trigger before_kitchen_update
   before update on public.kitchens
   for each row execute function public.touch_kitchen_updated_at();
@@ -262,7 +289,7 @@ create trigger before_kitchen_update
 -- auto-generated name, find it first with:
 --   select conname from pg_constraint where conrelid = 'public.profiles'::regclass and contype = 'c';
 -- ----------------------------------------------------------------------------
-alter table public.profiles drop constraint profiles_role_check;
+alter table public.profiles drop constraint if exists profiles_role_check;
 alter table public.profiles add constraint profiles_role_check
   check (role in ('customer', 'cook', 'rider', 'picker', 'admin'));
 
@@ -272,7 +299,7 @@ alter table public.profiles add constraint profiles_role_check
 -- applications. Deliberately minimal fields — this role is meant for
 -- students/anyone nearby wanting casual pocket money, not a vetted fleet.
 -- ----------------------------------------------------------------------------
-create table public.picker_applications (
+create table if not exists public.picker_applications (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   note text, -- optional: why they want to pick up orders, anything relevant
@@ -284,18 +311,22 @@ create table public.picker_applications (
 
 alter table public.picker_applications enable row level security;
 
+drop policy if exists "Applicants can read their own picker application" on public.picker_applications;
 create policy "Applicants can read their own picker application"
   on public.picker_applications for select
   using (auth.uid() = user_id);
 
+drop policy if exists "Applicants can submit a picker application" on public.picker_applications;
 create policy "Applicants can submit a picker application"
   on public.picker_applications for insert
   with check (auth.uid() = user_id);
 
+drop policy if exists "Admins can read every picker application" on public.picker_applications;
 create policy "Admins can read every picker application"
   on public.picker_applications for select
   using (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin'));
 
+drop policy if exists "Admins can update every picker application" on public.picker_applications;
 create policy "Admins can update every picker application"
   on public.picker_applications for update
   using (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin'));
@@ -314,7 +345,7 @@ create policy "Admins can update every picker application"
 -- handoff loop testable now; link it to a real delivery_id once that table
 -- exists.
 -- ----------------------------------------------------------------------------
-create table public.pickup_requests (
+create table if not exists public.pickup_requests (
   id uuid primary key default gen_random_uuid(),
   rider_id uuid not null references public.profiles(id) on delete cascade,
   kitchen_id uuid not null references public.kitchens(id) on delete cascade,
@@ -328,19 +359,23 @@ create table public.pickup_requests (
 
 alter table public.pickup_requests enable row level security;
 
+drop policy if exists "Riders can create their own pickup requests" on public.pickup_requests;
 create policy "Riders can create their own pickup requests"
   on public.pickup_requests for insert
   with check (auth.uid() = rider_id);
 
+drop policy if exists "Riders can read their own pickup requests" on public.pickup_requests;
 create policy "Riders can read their own pickup requests"
   on public.pickup_requests for select
   using (auth.uid() = rider_id);
 
+drop policy if exists "Riders can cancel their own open pickup requests" on public.pickup_requests;
 create policy "Riders can cancel their own open pickup requests"
   on public.pickup_requests for update
   using (auth.uid() = rider_id and status = 'open')
   with check (auth.uid() = rider_id and status = 'cancelled');
 
+drop policy if exists "Pickers can read open pickup requests" on public.pickup_requests;
 create policy "Pickers can read open pickup requests"
   on public.pickup_requests for select
   using (
@@ -348,10 +383,12 @@ create policy "Pickers can read open pickup requests"
     and exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'picker')
   );
 
+drop policy if exists "Pickers can read their assigned pickup requests" on public.pickup_requests;
 create policy "Pickers can read their assigned pickup requests"
   on public.pickup_requests for select
   using (auth.uid() = picker_id);
 
+drop policy if exists "Pickers can accept an open pickup request" on public.pickup_requests;
 create policy "Pickers can accept an open pickup request"
   on public.pickup_requests for update
   using (
@@ -360,15 +397,18 @@ create policy "Pickers can accept an open pickup request"
   )
   with check (picker_id = auth.uid() and status = 'accepted');
 
+drop policy if exists "Pickers can complete their assigned pickup request" on public.pickup_requests;
 create policy "Pickers can complete their assigned pickup request"
   on public.pickup_requests for update
   using (auth.uid() = picker_id)
   with check (auth.uid() = picker_id);
 
+drop policy if exists "Admins can read every pickup request" on public.pickup_requests;
 create policy "Admins can read every pickup request"
   on public.pickup_requests for select
   using (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin'));
 
+drop policy if exists "Admins can update every pickup request" on public.pickup_requests;
 create policy "Admins can update every pickup request"
   on public.pickup_requests for update
   using (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin'));
@@ -395,7 +435,7 @@ create policy "Admins can update every pickup request"
 -- 'paid' once they've received the PayNow transfer off-platform — same
 -- trust-based, no-in-app-gateway pattern already used for rider-pays-picker.
 -- ----------------------------------------------------------------------------
-create table public.orders (
+create table if not exists public.orders (
   id uuid primary key default gen_random_uuid(),
   customer_id uuid not null references public.profiles(id) on delete cascade,
   kitchen_id uuid not null references public.kitchens(id) on delete cascade,
@@ -409,14 +449,17 @@ create table public.orders (
 
 alter table public.orders enable row level security;
 
+drop policy if exists "Customers can create their own orders" on public.orders;
 create policy "Customers can create their own orders"
   on public.orders for insert
   with check (auth.uid() = customer_id);
 
+drop policy if exists "Customers can read their own orders" on public.orders;
 create policy "Customers can read their own orders"
   on public.orders for select
   using (auth.uid() = customer_id);
 
+drop policy if exists "Cooks can read orders placed at their kitchen" on public.orders;
 create policy "Cooks can read orders placed at their kitchen"
   on public.orders for select
   using (auth.uid() = kitchen_id);
@@ -425,11 +468,13 @@ create policy "Cooks can read orders placed at their kitchen"
 -- before accepted) are enforced by the app's update calls including the
 -- expected current state in their WHERE clause, not by this policy — same
 -- "first to accept wins" level of rigor already used for pickup_requests.
+drop policy if exists "Cooks can update orders placed at their kitchen" on public.orders;
 create policy "Cooks can update orders placed at their kitchen"
   on public.orders for update
   using (auth.uid() = kitchen_id)
   with check (auth.uid() = kitchen_id);
 
+drop policy if exists "Admins can read every order" on public.orders;
 create policy "Admins can read every order"
   on public.orders for select
   using (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin'));
@@ -443,7 +488,7 @@ create policy "Admins can read every order"
 -- save, so menu_item_id is set null (not cascaded) if the original row is
 -- gone — the snapshot is what matters for order history.
 -- ----------------------------------------------------------------------------
-create table public.order_items (
+create table if not exists public.order_items (
   id uuid primary key default gen_random_uuid(),
   order_id uuid not null references public.orders(id) on delete cascade,
   menu_item_id uuid references public.menu_items(id) on delete set null,
@@ -454,24 +499,28 @@ create table public.order_items (
 
 alter table public.order_items enable row level security;
 
+drop policy if exists "Customers can create items on their own orders" on public.order_items;
 create policy "Customers can create items on their own orders"
   on public.order_items for insert
   with check (
     exists (select 1 from public.orders o where o.id = order_items.order_id and o.customer_id = auth.uid())
   );
 
+drop policy if exists "Customers can read items on their own orders" on public.order_items;
 create policy "Customers can read items on their own orders"
   on public.order_items for select
   using (
     exists (select 1 from public.orders o where o.id = order_items.order_id and o.customer_id = auth.uid())
   );
 
+drop policy if exists "Cooks can read items on orders placed at their kitchen" on public.order_items;
 create policy "Cooks can read items on orders placed at their kitchen"
   on public.order_items for select
   using (
     exists (select 1 from public.orders o where o.id = order_items.order_id and o.kitchen_id = auth.uid())
   );
 
+drop policy if exists "Admins can read every order item" on public.order_items;
 create policy "Admins can read every order item"
   on public.order_items for select
   using (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin'));
@@ -496,7 +545,7 @@ create policy "Admins can read every order item"
 -- "Anyone can read live kitchens" policies already cover this column, no
 -- new RLS needed.
 -- ----------------------------------------------------------------------------
-alter table public.kitchens add column paynow_uen text;
+alter table public.kitchens add column if not exists paynow_uen text;
 
 update public.kitchens k
 set paynow_uen = (
