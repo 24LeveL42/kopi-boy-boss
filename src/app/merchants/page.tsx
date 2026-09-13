@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { LoginForm } from "@/components/LoginForm";
 import { NotAuthorized } from "@/components/NotAuthorized";
 import { AdminShell } from "@/components/AdminShell";
@@ -64,6 +65,13 @@ export default async function MerchantsPage() {
                     >
                       {m.is_active ? "Active" : "Blocked"}
                     </span>
+                    <Link
+                      href={`/merchants/${m.id}/edit`}
+                      className="rounded-lg px-3 py-1.5 text-xs font-medium text-white"
+                      style={{ background: "var(--kb-purple)" }}
+                    >
+                      Edit
+                    </Link>
                     <form action={setPartnerActive.bind(null, m.id, !m.is_active)}>
                       <button
                         className="rounded-lg px-3 py-1.5 text-xs font-medium text-white"
