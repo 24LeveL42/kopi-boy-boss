@@ -5,54 +5,54 @@ import { AdminShell } from "@/components/AdminShell";
 import { requireAdmin } from "@/lib/require-admin";
 import { setPartnerActive, deleteTestPartner } from "@/lib/actions";
 import { ActionButton } from "@/components/ActionButton";
-import type { Profile, CookApplication } from "@/lib/types-auth";
+import type { Profile } from "@/lib/types-auth";
+import type { Kitchen } from "@/lib/types-kitchen";
 
 export default async function MerchantsPage() {
   const { supabase, user, profile } = await requireAdmin();
   if (!user) return <LoginForm />;
   if (!profile || profile.role !== "admin") return <NotAuthorized />;
 
-  const [{ data: merchantProfiles }, { data: approvedApps }] = await Promise.all([
-    supabase
-      .from("profiles")
-      .select("*")
-      .eq("role", "cook")
-      .order("created_at", { ascending: false })
-      .returns<Profile[]>(),
-    supabase
-      .from("cook_applications")
-      .select("*")
-      .eq("status", "approved")
-      .returns<CookApplication[]>(),
-  ]);
+  const { data: liveKitchens } = await supabase
+    .from("kitchens")
+    .select("*")
+    .eq("is_live", true)
+    .order("created_at", { ascending: false })
+    .returns<Kitchen[]>();
 
-  const merchants = merchantProfiles ?? [];
-  const appsByUser = new Map((approvedApps ?? []).map((a) => [a.user_id, a]));
+  const kitchens = liveKitchens ?? [];
+  const kitchenIds = kitchens.map((k) => k.id);
+
+  const { data: owners } = kitchenIds.length
+    ? await supabase.from("profiles").select("*").in("id", kitchenIds).returns<Profile[]>()
+    : { data: [] as Profile[] };
+
+  const ownerById = new Map((owners ?? []).map((p) => [p.id, p]));
 
   return (
     <AdminShell
-      title={`Merchants (${merchants.length})`}
-      subtitle="Approved cooks, hawkers, bakeries, and small food businesses selling on Kopi Boy."
+      title={`Merchants (${kitchens.length})`}
+      subtitle="Live kitchens selling on Kopi Boy — hawkers, bakeries, home cooks, and more."
     >
-      {merchants.length === 0 ? (
+      {kitchens.length === 0 ? (
         <p className="rounded-2xl bg-white p-5 text-sm shadow-lg" style={{ color: "var(--kb-ink-soft)" }}>
-          No approved merchants yet.
+          No live merchants yet.
         </p>
       ) : (
         <div className="space-y-2">
-          {merchants.map((m) => {
-            const app = appsByUser.get(m.id);
+          {kitchens.map((k) => {
+            const owner = ownerById.get(k.id);
             return (
-              <div key={m.id} className="rounded-2xl bg-white p-4 shadow-lg" style={{ color: "var(--kb-ink)" }}>
+              <div key={k.id} className="rounded-2xl bg-white p-4 shadow-lg" style={{ color: "var(--kb-ink)" }}>
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-semibold">{app?.business_name || m.full_name || "(no name on file)"}</p>
+                    <p className="text-sm font-semibold">{k.business_name}</p>
                     <p className="text-xs" style={{ color: "var(--kb-ink-soft)" }}>
-                      {app ? `${app.business_type ?? "—"} · ${app.neighbourhood ?? "—"}` : "No application on file"}
+                      {k.category} · {k.neighbourhood}
                     </p>
-                    {m.phone && (
+                    {owner?.phone && (
                       <p className="mt-1 text-xs" style={{ color: "var(--kb-ink-soft)" }}>
-                        {m.phone}
+                        {owner.phone}
                       </p>
                     )}
                   </div>
@@ -60,37 +60,37 @@ export default async function MerchantsPage() {
                     <span
                       className="rounded-full px-2.5 py-1 text-xs font-medium"
                       style={{
-                        background: m.is_active ? "rgba(34,197,94,0.15)" : "rgba(239,68,68,0.15)",
-                        color: m.is_active ? "#16A34A" : "#DC2626",
+                        background: owner?.is_active ? "rgba(34,197,94,0.15)" : "rgba(239,68,68,0.15)",
+                        color: owner?.is_active ? "#16A34A" : "#DC2626",
                       }}
                     >
-                      {m.is_active ? "Active" : "Blocked"}
+                      {owner?.is_active ? "Active" : "Blocked"}
                     </span>
                     <Link
-                      href={`/merchants/${m.id}/edit`}
+                      href={`/merchants/${k.id}/edit`}
                       className="rounded-lg px-3 py-1.5 text-xs font-medium text-white"
                       style={{ background: "var(--kb-purple)" }}
                     >
                       Edit
                     </Link>
                     <ActionButton
-                      action={setPartnerActive.bind(null, m.id, !m.is_active)}
-                      label={m.is_active ? "Block" : "Reinstate"}
+                      action={setPartnerActive.bind(null, k.id, !owner?.is_active)}
+                      label={owner?.is_active ? "Block" : "Reinstate"}
                       pendingLabel="Saving…"
-                      background={m.is_active ? "var(--kb-danger)" : "var(--kb-green-deep)"}
+                      background={owner?.is_active ? "var(--kb-danger)" : "var(--kb-green-deep)"}
                     />
                     <ActionButton
-                      action={deleteTestPartner.bind(null, m.id, "cook")}
+                      action={deleteTestPartner.bind(null, k.id, "cook")}
                       label="Delete"
                       pendingLabel="Deleting…"
                       background="var(--kb-cream)"
                       color="var(--kb-danger)"
-                      confirmMessage={`Delete ${m.full_name || "this partner"}? This removes their profile, application, and kitchen/menu data.`}
+                      confirmMessage={`Delete ${k.business_name}? This removes their profile, application, and kitchen/menu data.`}
                     />
                   </div>
                 </div>
-                {app?.description && (
-                  <p className="mt-2 text-xs" style={{ color: "var(--kb-ink-soft)" }}>{app.description}</p>
+                {k.description && (
+                  <p className="mt-2 text-xs" style={{ color: "var(--kb-ink-soft)" }}>{k.description}</p>
                 )}
               </div>
             );
