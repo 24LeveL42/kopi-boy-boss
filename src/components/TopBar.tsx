@@ -1,18 +1,12 @@
 import Link from "next/link";
 import { Logo } from "./Logo";
 
-export function TopBar({ badge = "HQ Admin" }: { badge?: string }) {
+export function TopBar() {
   return (
-    <div className="flex items-center justify-between">
+    <div className="flex items-center">
       <Link href="/" aria-label="Go to Command Centre">
-        <Logo size={32} />
+        <Logo variant="admin" size={64} />
       </Link>
-      <span
-        className="rounded-full px-3 py-1 text-xs font-semibold"
-        style={{ background: "var(--kb-navy)", color: "var(--kb-on-navy-soft)", border: "1px solid var(--kb-navy-line)" }}
-      >
-        {badge}
-      </span>
     </div>
   );
 }

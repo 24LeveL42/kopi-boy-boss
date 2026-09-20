@@ -72,7 +72,7 @@ export function LoginForm() {
   return (
     <div className="mx-auto flex min-h-screen max-w-sm flex-col justify-center px-6" style={{ background: "var(--kb-navy)" }}>
       <div className="mb-8 flex justify-center">
-        <Logo size={56} />
+        <Logo variant="admin" size={96} showWordmark={false} />
       </div>
 
       <button

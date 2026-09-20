@@ -4,7 +4,7 @@ import { SignOutButton } from "./SignOutButton";
 export function NotAuthorized() {
   return (
     <div className="mx-auto flex min-h-screen max-w-sm flex-col items-center justify-center px-6 text-center" style={{ background: "var(--kb-navy)" }}>
-      <Logo size={48} />
+      <Logo variant="admin" size={80} showWordmark={false} />
       <h1 className="mt-6 font-display text-lg font-bold" style={{ color: "var(--kb-on-navy)" }}>
         Not authorized
       </h1>
