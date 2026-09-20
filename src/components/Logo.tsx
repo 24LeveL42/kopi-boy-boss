@@ -11,7 +11,7 @@ interface LogoProps {
 // Source crops (px) — preserve each asset's aspect ratio.
 const ASSETS = {
   default: { src: "/brand/logo-icon.png", w: 427, h: 367 },
-  admin: { src: "/brand/logo-admin.png", w: 252, h: 259 },
+  admin: { src: "/brand/logo-admin.png", w: 752, h: 776 }, // 3x supersampled master
 } as const;
 
 /**
@@ -33,6 +33,7 @@ export function Logo({ size = 40, showWordmark = true, variant = "default", clas
         width={width}
         height={height}
         style={{ height, width: "auto" }}
+        quality={100}
         priority
       />
       {showWordmark && (
