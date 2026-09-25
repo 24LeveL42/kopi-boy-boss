@@ -15,6 +15,8 @@ export interface CookApplication {
   description: string | null;
   neighbourhood: string | null;
   paynow_uen: string | null;
+  /** ACRA registration number; required for every business type except Home Cook (Partner schema section 26). */
+  business_uen: string | null;
   status: "pending" | "approved" | "rejected";
   created_at: string;
 }

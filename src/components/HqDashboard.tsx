@@ -115,6 +115,12 @@ export async function HqDashboard() {
                       <p className="text-xs" style={{ color: "var(--kb-ink-soft)" }}>
                         Cook &middot; {app.business_type} &middot; {app.neighbourhood}
                       </p>
+                      {app.business_uen && (
+                        <p className="text-xs" style={{ color: "var(--kb-ink-soft)" }}>
+                          UEN <span className="font-mono font-semibold" style={{ color: "var(--kb-ink)" }}>{app.business_uen}</span>
+                          {" "}&middot; check on ACRA BizFile before approving
+                        </p>
+                      )}
                       <p className="mt-1 text-xs font-medium" style={{ color: "var(--kb-ink)" }}>
                         {applicant?.full_name || "(no name on file)"}
                         {applicant?.phone && ` · ${applicant.phone}`}
