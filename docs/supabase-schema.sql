@@ -556,3 +556,76 @@ set paynow_uen = (
   limit 1
 )
 where k.paynow_uen is null;
+
+-- ============================================================================
+-- KOPI BOY 2.0 — Complaint thread status (Boss app /complaints)
+-- Run this ONCE, after the Customer app's §25 (complaint_messages) and the
+-- Partner schema (user_has_role), in the same Supabase project's SQL Editor.
+-- Safe to re-run (idempotent).
+-- ============================================================================
+
+-- ----------------------------------------------------------------------------
+-- 15. COMPLAINT THREADS — HQ's open/resolved flag per complaint thread
+-- A thread is the set of complaint_messages for one order (Customer-owned,
+-- immutable), so there's no thread row to put a status on. This table is that
+-- row, keyed by order_id. No row = open. It's HQ bookkeeping only: admins
+-- (user_has_role('admin')) read and write it; customers, cooks and riders
+-- can't see it. Rows are never deleted by the app — "Reopen" sets status back
+-- to 'open'. Deleting the order cascades.
+--
+-- resolved_at/resolved_by are stamped by the trigger below from the server
+-- clock and auth.uid(), never taken from the client: /complaints compares
+-- resolved_at with complaint_messages.created_at to spot a customer writing
+-- again after the thread was settled.
+-- ----------------------------------------------------------------------------
+create table if not exists public.complaint_threads (
+  order_id uuid primary key references public.orders(id) on delete cascade,
+  status text not null default 'open' check (status in ('open', 'resolved')),
+  resolved_at timestamptz,
+  resolved_by uuid references public.profiles(id) on delete set null,
+  updated_at timestamptz not null default now()
+);
+
+alter table public.complaint_threads enable row level security;
+
+revoke all on public.complaint_threads from anon, authenticated;
+grant select, insert, update on public.complaint_threads to authenticated;
+
+drop policy if exists "HQ can read complaint thread status" on public.complaint_threads;
+create policy "HQ can read complaint thread status"
+  on public.complaint_threads for select
+  using (public.user_has_role('admin'));
+
+drop policy if exists "HQ can create complaint thread status" on public.complaint_threads;
+create policy "HQ can create complaint thread status"
+  on public.complaint_threads for insert
+  with check (public.user_has_role('admin'));
+
+drop policy if exists "HQ can update complaint thread status" on public.complaint_threads;
+create policy "HQ can update complaint thread status"
+  on public.complaint_threads for update
+  using (public.user_has_role('admin'))
+  with check (public.user_has_role('admin'));
+
+create or replace function public.stamp_complaint_thread_status()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  if new.status = 'resolved' then
+    new.resolved_at := now();
+    new.resolved_by := auth.uid();
+  else
+    new.resolved_at := null;
+    new.resolved_by := null;
+  end if;
+  new.updated_at := now();
+  return new;
+end;
+$$;
+
+drop trigger if exists stamp_complaint_thread_status on public.complaint_threads;
+create trigger stamp_complaint_thread_status
+  before insert or update on public.complaint_threads
+  for each row execute function public.stamp_complaint_thread_status();

@@ -66,6 +66,10 @@ export interface ThreadSummary {
   lastMessage: ComplaintMessageRow;
   /** The newest message came from the order's customer, so HQ owes a reply. */
   needsReply: boolean;
+  /** HQ marked it settled and the customer hasn't written since. */
+  resolved: boolean;
+  /** HQ marked it settled, then the customer wrote again — back in the active list. */
+  reopened: boolean;
 }
 
 export interface CustomerThreadGroup {
@@ -81,10 +85,15 @@ export interface CustomerThreadGroup {
  * activity; groups follow the same rule using their most urgent thread.
  * `customerByOrder` comes from public.orders; a missing entry (order not
  * readable) still gets a thread, under a null customer.
+ * `resolvedAtByOrder` holds resolved_at for threads whose complaint_threads
+ * status is 'resolved'. `include` picks which threads to keep (e.g. one tab)
+ * before grouping, so group counts and ordering only reflect what's shown.
  */
 export function groupThreads(
   messages: ComplaintMessageRow[],
-  customerByOrder: Record<string, string>
+  customerByOrder: Record<string, string>,
+  resolvedAtByOrder: Record<string, string> = {},
+  include: (t: ThreadSummary) => boolean = () => true
 ): CustomerThreadGroup[] {
   const byOrder = new Map<string, ComplaintMessageRow[]>();
   for (const m of messages) {
@@ -98,14 +107,23 @@ export function groupThreads(
     const sorted = mergeMessages([], rows);
     const lastMessage = sorted[sorted.length - 1];
     const customerId = customerByOrder[orderId] ?? null;
-    threads.push({
+    const resolvedAt = resolvedAtByOrder[orderId];
+    // resolved_at and created_at are both server timestamps, so this compare is safe.
+    const customerWroteSince =
+      resolvedAt !== undefined &&
+      sorted.some((m) => m.sender_id === customerId && new Date(m.created_at) > new Date(resolvedAt));
+    const thread: ThreadSummary = {
       orderId,
       customerId,
       messageCount: sorted.length,
       photoCount: sorted.filter((m) => m.photo_path).length,
       lastMessage,
-      needsReply: customerId !== null && lastMessage.sender_id === customerId,
-    });
+      needsReply: false,
+      resolved: resolvedAt !== undefined && !customerWroteSince,
+      reopened: customerWroteSince,
+    };
+    thread.needsReply = !thread.resolved && customerId !== null && lastMessage.sender_id === customerId;
+    if (include(thread)) threads.push(thread);
   }
 
   const byUrgency = (a: { needsReply: boolean; at: string }, b: { needsReply: boolean; at: string }) =>

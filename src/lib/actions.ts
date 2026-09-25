@@ -173,3 +173,25 @@ export async function deleteTestPartner(partnerId: string, role: "cook" | "rider
   revalidatePath("/merchants");
   revalidatePath("/riders");
 }
+
+/**
+ * Marks a complaint thread settled ("resolved") or puts it back in the active
+ * list ("open"). resolved_at/resolved_by are stamped by a DB trigger from the
+ * server clock and auth.uid(); RLS (user_has_role('admin')) is what stops
+ * non-admins, this only surfaces its error.
+ */
+export async function setComplaintThreadStatus(orderId: string, status: "open" | "resolved") {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not signed in.");
+
+  const { error } = await supabase
+    .from("complaint_threads")
+    .upsert({ order_id: orderId, status }, { onConflict: "order_id" });
+  if (error) throw new Error(`Couldn't update thread: ${error.message}`);
+
+  revalidatePath("/complaints");
+  revalidatePath(`/complaints/${orderId}`);
+}

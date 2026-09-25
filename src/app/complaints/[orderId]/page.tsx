@@ -3,8 +3,10 @@ import { LoginForm } from "@/components/LoginForm";
 import { NotAuthorized } from "@/components/NotAuthorized";
 import { AdminShell } from "@/components/AdminShell";
 import { ComplaintThread } from "@/components/ComplaintThread";
+import { ComplaintsRealtimeRefresher } from "@/components/ComplaintsRealtimeRefresher";
+import { ThreadStatusBadge, ThreadStatusButton } from "@/components/ThreadStatus";
 import { hasAdminRole, requireAdmin } from "@/lib/require-admin";
-import { formatSgTime } from "@/lib/complaints";
+import { COMPLAINT_THREAD_FETCH_LIMIT, formatSgTime, groupThreads, type ComplaintMessageRow } from "@/lib/complaints";
 
 type OrderRow = {
   id: string;
@@ -42,11 +44,27 @@ export default async function ComplaintThreadPage({ params }: { params: Promise<
     );
   }
 
-  const { data: customer } = await supabase
-    .from("profiles")
-    .select("full_name, phone")
-    .eq("id", order.customer_id)
-    .maybeSingle<{ full_name: string | null; phone: string | null }>();
+  const [{ data: customer }, { data: status }, { data: messages }] = await Promise.all([
+    supabase
+      .from("profiles")
+      .select("full_name, phone")
+      .eq("id", order.customer_id)
+      .maybeSingle<{ full_name: string | null; phone: string | null }>(),
+    supabase
+      .from("complaint_threads")
+      .select("status, resolved_at")
+      .eq("order_id", order.id)
+      .maybeSingle<{ status: "open" | "resolved"; resolved_at: string | null }>(),
+    supabase
+      .from("complaint_messages")
+      .select("*")
+      .eq("order_id", order.id)
+      .order("created_at", { ascending: false })
+      .limit(COMPLAINT_THREAD_FETCH_LIMIT)
+      .returns<ComplaintMessageRow[]>(),
+  ]);
+  const resolvedAt = status?.status === "resolved" && status.resolved_at ? { [order.id]: status.resolved_at } : {};
+  const thread = groupThreads(messages ?? [], { [order.id]: order.customer_id }, resolvedAt)[0]?.threads[0];
   const customerName = customer?.full_name || `Customer ${order.customer_id.slice(0, 8)}`;
 
   return (
@@ -62,9 +80,18 @@ export default async function ComplaintThreadPage({ params }: { params: Promise<
         .filter(Boolean)
         .join(" · ")}
     >
-      <Link href="/complaints" className="mb-3 inline-block text-sm" style={{ color: "var(--kb-green)" }}>
-        &larr; All complaint threads
-      </Link>
+      <ComplaintsRealtimeRefresher />
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <Link href="/complaints" className="text-sm" style={{ color: "var(--kb-green)" }}>
+          &larr; All complaint threads
+        </Link>
+        {thread && (
+          <div className="flex items-center gap-2">
+            <ThreadStatusBadge thread={thread} />
+            <ThreadStatusButton orderId={order.id} thread={thread} />
+          </div>
+        )}
+      </div>
       <ComplaintThread orderId={order.id} customerId={order.customer_id} customerName={customerName} currentUserId={user.id} />
     </AdminShell>
   );
