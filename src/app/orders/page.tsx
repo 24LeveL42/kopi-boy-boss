@@ -5,7 +5,7 @@ import { requireAdmin } from "@/lib/require-admin";
 
 type OrderRow = {
   id: string;
-  status: string;
+  order_status: string;
   created_at: string;
   [key: string]: unknown;
 };
@@ -45,7 +45,7 @@ export default async function OrdersPage() {
                   className="rounded-full px-2.5 py-1 text-xs font-medium"
                   style={{ background: "var(--kb-cream)", color: "var(--kb-ink)" }}
                 >
-                  {o.status}
+                  {o.order_status}
                 </span>
               </div>
               <p className="mt-1 text-xs" style={{ color: "var(--kb-ink-soft)" }}>
