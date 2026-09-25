@@ -11,6 +11,7 @@ import {
 } from "@/lib/actions";
 import type { CookApplication, RiderApplication, PickerApplication, Profile } from "@/lib/types-auth";
 import { ActionButton } from "./ActionButton";
+import { ApplicantPhoto } from "./ApplicantPhoto";
 
 export async function HqDashboard() {
   const supabase = await createClient();
@@ -146,16 +147,19 @@ export async function HqDashboard() {
               const applicant = applicantById.get(app.user_id);
               return (
                 <div key={app.id} className="rounded-2xl bg-white p-4 shadow-lg" style={{ color: "var(--kb-ink)" }}>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-semibold">Rider application</p>
-                      <p className="text-xs" style={{ color: "var(--kb-ink-soft)" }}>
-                        {app.vehicle_type} {app.license_plate && `\u00b7 ${app.license_plate}`}
-                      </p>
-                      <p className="mt-1 text-xs font-medium" style={{ color: "var(--kb-ink)" }}>
-                        {applicant?.full_name || "(no name on file)"}
-                        {applicant?.phone && ` · ${applicant.phone}`}
-                      </p>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <ApplicantPhoto url={app.photo_url} userId={app.user_id} name={applicant?.full_name || "the applicant"} />
+                      <div>
+                        <p className="text-sm font-semibold">Rider application</p>
+                        <p className="text-xs" style={{ color: "var(--kb-ink-soft)" }}>
+                          {app.vehicle_type} {app.license_plate && `\u00b7 ${app.license_plate}`}
+                        </p>
+                        <p className="mt-1 text-xs font-medium" style={{ color: "var(--kb-ink)" }}>
+                          {applicant?.full_name || "(no name on file)"}
+                          {applicant?.phone && ` · ${applicant.phone}`}
+                        </p>
+                      </div>
                     </div>
                     <div className="flex gap-2">
                       <ActionButton
@@ -181,16 +185,19 @@ export async function HqDashboard() {
               const applicant = applicantById.get(app.user_id);
               return (
                 <div key={app.id} className="rounded-2xl bg-white p-4 shadow-lg" style={{ color: "var(--kb-ink)" }}>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-semibold">Picker application</p>
-                      <p className="mt-1 text-xs font-medium" style={{ color: "var(--kb-ink)" }}>
-                        {applicant?.full_name || "(no name on file)"}
-                        {applicant?.phone && ` · ${applicant.phone}`}
-                      </p>
-                      {app.note && (
-                        <p className="mt-1 text-xs" style={{ color: "var(--kb-ink-soft)" }}>{app.note}</p>
-                      )}
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <ApplicantPhoto url={app.photo_url} userId={app.user_id} name={applicant?.full_name || "the applicant"} />
+                      <div>
+                        <p className="text-sm font-semibold">Picker application</p>
+                        <p className="mt-1 text-xs font-medium" style={{ color: "var(--kb-ink)" }}>
+                          {applicant?.full_name || "(no name on file)"}
+                          {applicant?.phone && ` · ${applicant.phone}`}
+                        </p>
+                        {app.note && (
+                          <p className="mt-1 text-xs" style={{ color: "var(--kb-ink-soft)" }}>{app.note}</p>
+                        )}
+                      </div>
                     </div>
                     <div className="flex gap-2">
                       <ActionButton
