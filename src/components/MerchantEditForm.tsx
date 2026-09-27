@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { Spinner } from "./Spinner";
 import type { Kitchen, MenuItem, MerchantCategory, CuisineType } from "@/lib/types-kitchen";
 
 const CATEGORIES: { id: MerchantCategory; label: string }[] = [
@@ -57,7 +58,7 @@ export function MerchantEditForm({
       ? existingItems.map((i) => ({ key: i.id, name: i.name, price: String(i.price), photo_url: i.photo_url ?? "" }))
       : [emptyItem()]
   );
-  const [loading, setLoading] = useState(false);
+  const [saving, startSaving] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
   function updateItem(key: string, patch: Partial<DraftItem>) {
@@ -70,8 +71,9 @@ export function MerchantEditForm({
     setItems((prev) => (prev.length > 1 ? prev.filter((it) => it.key !== key) : prev));
   }
 
-  async function handleSubmit(e: React.FormEvent) {
+  function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (saving) return;
     setError(null);
 
     const validItems = items
@@ -83,45 +85,46 @@ export function MerchantEditForm({
       return;
     }
 
-    setLoading(true);
+    // Stays pending through the redirect, so the button can't be re-tapped mid-save.
+    startSaving(async () => {
+      try {
+        const { error: kitchenError } = await supabase.from("kitchens").upsert({
+          id: merchantId,
+          business_name: businessName.trim(),
+          category,
+          cuisine_type: cuisineType,
+          neighbourhood: neighbourhood.trim(),
+          description: description.trim() || null,
+          hero_image: heroImage.trim() || null,
+          is_live: isLive,
+        });
+        if (kitchenError) {
+          setError(kitchenError.message);
+          return;
+        }
 
-    const { error: kitchenError } = await supabase.from("kitchens").upsert({
-      id: merchantId,
-      business_name: businessName.trim(),
-      category,
-      cuisine_type: cuisineType,
-      neighbourhood: neighbourhood.trim(),
-      description: description.trim() || null,
-      hero_image: heroImage.trim() || null,
-      is_live: isLive,
-    });
+        await supabase.from("menu_items").delete().eq("kitchen_id", merchantId);
+        if (validItems.length > 0) {
+          const { error: itemsError } = await supabase.from("menu_items").insert(
+            validItems.map((it) => ({
+              kitchen_id: merchantId,
+              name: it.name,
+              price: it.price,
+              photo_url: it.photo_url.trim() || null,
+            }))
+          );
+          if (itemsError) {
+            setError(itemsError.message);
+            return;
+          }
+        }
 
-    if (kitchenError) {
-      setError(kitchenError.message);
-      setLoading(false);
-      return;
-    }
-
-    await supabase.from("menu_items").delete().eq("kitchen_id", merchantId);
-    if (validItems.length > 0) {
-      const { error: itemsError } = await supabase.from("menu_items").insert(
-        validItems.map((it) => ({
-          kitchen_id: merchantId,
-          name: it.name,
-          price: it.price,
-          photo_url: it.photo_url.trim() || null,
-        }))
-      );
-      if (itemsError) {
-        setError(itemsError.message);
-        setLoading(false);
-        return;
+        router.push("/merchants");
+        router.refresh();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Something went wrong — please try again.");
       }
-    }
-
-    setLoading(false);
-    router.push("/merchants");
-    router.refresh();
+    });
   }
 
   return (
@@ -253,11 +256,13 @@ export function MerchantEditForm({
 
       <button
         type="submit"
-        disabled={loading}
-        className="w-full rounded-2xl py-3.5 text-[15px] font-semibold text-white disabled:opacity-60"
+        disabled={saving}
+        aria-busy={saving}
+        className="flex w-full items-center justify-center gap-2 rounded-2xl py-3.5 text-[15px] font-semibold text-white disabled:opacity-60"
         style={{ background: "linear-gradient(90deg, var(--kb-purple) 0%, var(--kb-green) 100%)" }}
       >
-        {loading ? "Saving…" : "Save changes"}
+        {saving && <Spinner className="size-4" />}
+        {saving ? "Saving…" : "Save changes"}
       </button>
     </form>
   );

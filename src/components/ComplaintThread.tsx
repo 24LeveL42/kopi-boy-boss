@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { createClient } from "@/lib/supabase/client";
 import {
   COMPLAINT_BODY_MAX_LENGTH,
@@ -12,6 +12,7 @@ import {
   normalizeReply,
   type ComplaintMessageRow,
 } from "@/lib/complaints";
+import { Spinner } from "./Spinner";
 
 type ThreadStatus = "loading" | "ready" | "error";
 
@@ -41,7 +42,7 @@ export function ComplaintThread({
   const [messages, setMessages] = useState<ComplaintMessageRow[]>([]);
   const [photoUrls, setPhotoUrls] = useState<Record<string, string>>({});
   const [draft, setDraft] = useState("");
-  const [sending, setSending] = useState(false);
+  const [sending, startSending] = useTransition();
   const [sendError, setSendError] = useState<string | null>(null);
   const messagesRef = useRef<ComplaintMessageRow[]>([]);
   const requestedPathsRef = useRef<Set<string>>(new Set());
@@ -125,21 +126,25 @@ export function ComplaintThread({
     listEndRef.current?.scrollIntoView?.({ block: "end" });
   }, [messages]);
 
-  async function handleSend(e: React.FormEvent) {
+  function handleSend(e: React.FormEvent) {
     e.preventDefault();
     const body = normalizeReply(draft);
     if (body === null || sending) return;
-    setSending(true);
     setSendError(null);
-    const { error } = await createClient()
-      .from("complaint_messages")
-      .insert({ order_id: orderId, sender_id: currentUserId, body });
-    setSending(false);
-    if (error) {
-      setSendError(`Reply couldn't be sent — ${error.message}`);
-      return;
-    }
-    setDraft("");
+    startSending(async () => {
+      try {
+        const { error } = await createClient()
+          .from("complaint_messages")
+          .insert({ order_id: orderId, sender_id: currentUserId, body });
+        if (error) {
+          setSendError(`Reply couldn't be sent — ${error.message}`);
+          return;
+        }
+        setDraft("");
+      } catch (err) {
+        setSendError(`Reply couldn't be sent — ${err instanceof Error ? err.message : "network error"}`);
+      }
+    });
   }
 
   const canSend = !sending && normalizeReply(draft) !== null;
@@ -225,9 +230,11 @@ export function ComplaintThread({
         <button
           type="submit"
           disabled={!canSend}
-          className="shrink-0 rounded-full px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+          aria-busy={sending}
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-full px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
           style={{ background: "var(--kb-green-deep)" }}
         >
+          {sending && <Spinner />}
           {sending ? "Sending…" : "Send"}
         </button>
       </form>

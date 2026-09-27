@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Logo } from "./Logo";
+import { Spinner } from "./Spinner";
 
 type Step = "enter-phone" | "enter-code";
 
@@ -19,8 +20,10 @@ export function LoginForm() {
   const [step, setStep] = useState<Step>("enter-phone");
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [loading, startLoading] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  // Plain state rather than a transition: on success the page navigates away to
+  // Google, and the button should stay locked until it does.
   const [googleLoading, setGoogleLoading] = useState(false);
 
   const supabase = createClient();
@@ -29,44 +32,60 @@ export function LoginForm() {
   const fullPhone = `${SG_PREFIX}${phone.replace(/\D/g, "")}`;
 
   async function handleGoogleSignIn() {
+    if (googleLoading) return;
     setGoogleLoading(true);
     setError(null);
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: { redirectTo: `${window.location.origin}/auth/callback` },
-    });
-    if (error) {
-      setError(error.message);
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: { redirectTo: `${window.location.origin}/auth/callback` },
+      });
+      if (error) {
+        setError(error.message);
+        setGoogleLoading(false);
+      }
+      // On success, the browser navigates away to Google — no further action needed here.
+    } catch (err) {
+      setError(errorMessage(err));
       setGoogleLoading(false);
     }
-    // On success, the browser navigates away to Google — no further action needed here.
   }
 
-  async function handleSendCode(e: React.FormEvent) {
+  function handleSendCode(e: React.FormEvent) {
     e.preventDefault();
-    setLoading(true);
+    if (loading) return;
     setError(null);
-    const { error } = await supabase.auth.signInWithOtp({ phone: fullPhone });
-    setLoading(false);
-    if (error) {
-      setError(error.message);
-      return;
-    }
-    setStep("enter-code");
+    startLoading(async () => {
+      try {
+        const { error } = await supabase.auth.signInWithOtp({ phone: fullPhone });
+        if (error) {
+          setError(error.message);
+          return;
+        }
+        setStep("enter-code");
+      } catch (err) {
+        setError(errorMessage(err));
+      }
+    });
   }
 
-  async function handleVerifyCode(e: React.FormEvent) {
+  function handleVerifyCode(e: React.FormEvent) {
     e.preventDefault();
-    setLoading(true);
+    if (loading) return;
     setError(null);
-    const { error } = await supabase.auth.verifyOtp({ phone: fullPhone, token: code, type: "sms" });
-    setLoading(false);
-    if (error) {
-      setError(error.message);
-      return;
-    }
-    router.push("/");
-    router.refresh();
+    startLoading(async () => {
+      try {
+        const { error } = await supabase.auth.verifyOtp({ phone: fullPhone, token: code, type: "sms" });
+        if (error) {
+          setError(error.message);
+          return;
+        }
+        router.push("/");
+        router.refresh();
+      } catch (err) {
+        setError(errorMessage(err));
+      }
+    });
   }
 
   return (
@@ -78,10 +97,11 @@ export function LoginForm() {
       <button
         onClick={handleGoogleSignIn}
         disabled={googleLoading}
+        aria-busy={googleLoading}
         className="flex items-center justify-center gap-3 rounded-2xl bg-white py-3.5 text-[15px] font-semibold shadow-lg disabled:opacity-60"
         style={{ color: "var(--kb-ink)" }}
       >
-        <GoogleIcon />
+        {googleLoading ? <Spinner className="size-[18px]" /> : <GoogleIcon />}
         {googleLoading ? "Redirecting…" : "Continue with Google"}
       </button>
 
@@ -113,9 +133,11 @@ export function LoginForm() {
           <button
             type="submit"
             disabled={loading || phone.length < 8}
-            className="w-full rounded-2xl py-3.5 text-[15px] font-semibold text-white disabled:opacity-60"
+            aria-busy={loading}
+            className="flex w-full items-center justify-center gap-2 rounded-2xl py-3.5 text-[15px] font-semibold text-white disabled:opacity-60"
             style={{ background: "linear-gradient(90deg, var(--kb-purple) 0%, var(--kb-green) 100%)" }}
           >
+            {loading && <Spinner className="size-4" />}
             {loading ? "Sending code…" : "Send login code"}
           </button>
         </form>
@@ -137,15 +159,18 @@ export function LoginForm() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full rounded-2xl py-3.5 text-[15px] font-semibold text-white disabled:opacity-60"
+            aria-busy={loading}
+            className="flex w-full items-center justify-center gap-2 rounded-2xl py-3.5 text-[15px] font-semibold text-white disabled:opacity-60"
             style={{ background: "linear-gradient(90deg, var(--kb-purple) 0%, var(--kb-green) 100%)" }}
           >
+            {loading && <Spinner className="size-4" />}
             {loading ? "Verifying…" : "Verify & continue"}
           </button>
           <button
             type="button"
             onClick={() => setStep("enter-phone")}
-            className="w-full text-center text-sm"
+            disabled={loading}
+            className="w-full text-center text-sm disabled:opacity-60"
             style={{ color: "var(--kb-on-navy-soft)" }}
           >
             Use a different number
@@ -160,6 +185,10 @@ export function LoginForm() {
       )}
     </div>
   );
+}
+
+function errorMessage(err: unknown) {
+  return err instanceof Error ? err.message : "Something went wrong — please try again.";
 }
 
 function GoogleIcon() {

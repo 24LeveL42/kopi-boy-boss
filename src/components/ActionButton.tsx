@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { Spinner } from "./Spinner";
 
 export function ActionButton({
   action,
@@ -38,9 +39,11 @@ export function ActionButton({
         type="button"
         onClick={handleClick}
         disabled={pending}
-        className="rounded-lg px-3 py-1.5 text-xs font-medium disabled:opacity-60"
+        aria-busy={pending}
+        className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium disabled:opacity-60"
         style={{ background, color: color ?? "white" }}
       >
+        {pending && <Spinner className="size-3" />}
         {pending ? pendingLabel ?? "Working…" : label}
       </button>
       {error && (
