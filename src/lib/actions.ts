@@ -18,12 +18,14 @@ async function setRoleUnlessAdmin(
     .from("profiles")
     .select("role")
     .eq("id", userId)
-    .single();
+    .maybeSingle();
 
   if (readError) throw new Error(`Couldn't check applicant's profile: ${readError.message}`);
   if (existing?.role === "admin") return;
 
-  const { error } = await supabase.from("profiles").update({ role: newRole }).eq("id", userId);
+  const { error } = await supabase
+    .from("profiles")
+    .upsert({ id: userId, role: newRole }, { onConflict: "id" });
   if (error) throw new Error(`Couldn't update role: ${error.message}`);
 }
 
