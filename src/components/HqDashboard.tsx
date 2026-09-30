@@ -12,6 +12,8 @@ import {
 import type { CookApplication, RiderApplication, PickerApplication, Profile } from "@/lib/types-auth";
 import { ActionButton } from "./ActionButton";
 import { ApplicantPhoto } from "./ApplicantPhoto";
+import { ContactLine } from "./ContactLine";
+import { fetchEmailsById } from "@/lib/contacts";
 
 export async function HqDashboard() {
   const supabase = await createClient();
@@ -58,11 +60,14 @@ export async function HqDashboard() {
   const pickers = pendingPickers ?? [];
   const totalPending = cooks.length + riders.length + pickers.length;
 
-  // Pull applicant name/phone for every pending application in one query.
+  // Pull applicant name/phone/email for every pending application.
   const applicantIds = [...cooks, ...riders, ...pickers].map((a) => a.user_id);
-  const { data: applicantProfiles } = applicantIds.length
-    ? await supabase.from("profiles").select("*").in("id", applicantIds).returns<Profile[]>()
-    : { data: [] as Profile[] };
+  const [{ data: applicantProfiles }, emailById] = await Promise.all([
+    applicantIds.length
+      ? supabase.from("profiles").select("*").in("id", applicantIds).returns<Profile[]>()
+      : Promise.resolve({ data: [] as Profile[] }),
+    fetchEmailsById(supabase, applicantIds),
+  ]);
   const applicantById = new Map((applicantProfiles ?? []).map((p) => [p.id, p]));
 
   return (
@@ -123,8 +128,8 @@ export async function HqDashboard() {
                       )}
                       <p className="mt-1 text-xs font-medium" style={{ color: "var(--kb-ink)" }}>
                         {applicant?.full_name || "(no name on file)"}
-                        {applicant?.phone && ` · ${applicant.phone}`}
                       </p>
+                      <ContactLine phone={applicant?.phone} email={emailById.get(app.user_id)} />
                     </div>
                     <div className="flex gap-2">
                       <ActionButton
@@ -163,8 +168,8 @@ export async function HqDashboard() {
                         </p>
                         <p className="mt-1 text-xs font-medium" style={{ color: "var(--kb-ink)" }}>
                           {applicant?.full_name || "(no name on file)"}
-                          {applicant?.phone && ` · ${applicant.phone}`}
                         </p>
+                        <ContactLine phone={applicant?.phone} email={emailById.get(app.user_id)} />
                       </div>
                     </div>
                     <div className="flex gap-2">
@@ -198,8 +203,8 @@ export async function HqDashboard() {
                         <p className="text-sm font-semibold">Picker application</p>
                         <p className="mt-1 text-xs font-medium" style={{ color: "var(--kb-ink)" }}>
                           {applicant?.full_name || "(no name on file)"}
-                          {applicant?.phone && ` · ${applicant.phone}`}
                         </p>
+                        <ContactLine phone={applicant?.phone} email={emailById.get(app.user_id)} />
                         {app.note && (
                           <p className="mt-1 text-xs" style={{ color: "var(--kb-ink-soft)" }}>{app.note}</p>
                         )}

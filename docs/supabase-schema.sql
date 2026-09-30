@@ -629,3 +629,33 @@ drop trigger if exists stamp_complaint_thread_status on public.complaint_threads
 create trigger stamp_complaint_thread_status
   before insert or update on public.complaint_threads
   for each row execute function public.stamp_complaint_thread_status();
+
+-- ============================================================================
+-- KOPI BOY 2.0 — Partner contact emails (Boss app /partners + pending approvals)
+-- Run this ONCE, after the Partner schema (user_has_role), in the same
+-- Supabase project's SQL Editor. Safe to re-run (idempotent).
+-- ============================================================================
+
+-- ----------------------------------------------------------------------------
+-- 16. ADMIN-ONLY EMAIL LOOKUP
+-- Email lives in auth.users, which the app's publishable key can't read, and
+-- isn't mirrored into profiles. This returns id/email for the given users,
+-- but only when the caller is HQ (user_has_role('admin')); anyone else gets
+-- zero rows. security definer is what lets it read auth.users — keep the
+-- admin check inside the function, since RLS doesn't apply to it.
+-- ----------------------------------------------------------------------------
+create or replace function public.admin_user_emails(user_ids uuid[])
+returns table (id uuid, email text)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select u.id, u.email::text
+  from auth.users u
+  where u.id = any(user_ids)
+    and public.user_has_role('admin');
+$$;
+
+revoke all on function public.admin_user_emails(uuid[]) from public, anon;
+grant execute on function public.admin_user_emails(uuid[]) to authenticated;

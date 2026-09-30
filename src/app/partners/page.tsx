@@ -2,9 +2,9 @@ import { LoginForm } from "@/components/LoginForm";
 import { NotAuthorized } from "@/components/NotAuthorized";
 import { AdminShell } from "@/components/AdminShell";
 import { requireAdmin } from "@/lib/require-admin";
-import { setPartnerActive, deleteTestPartner } from "@/lib/actions";
-import { ActionButton } from "@/components/ActionButton";
+import { PartnerFinder, type PartnerListItem } from "@/components/PartnerFinder";
 import type { Profile } from "@/lib/types-auth";
+import { fetchEmailsById } from "@/lib/contacts";
 
 export default async function PartnersPage() {
   const { supabase, user, profile: viewerProfile } = await requireAdmin();
@@ -19,85 +19,32 @@ export default async function PartnersPage() {
     .returns<Profile[]>();
 
   const list = partners ?? [];
-  const cooks = list.filter((p) => p.role === "cook");
-  const riders = list.filter((p) => p.role === "rider");
-  const pickers = list.filter((p) => p.role === "picker");
+
+  // Kitchens share the cook's profile id; pulled so admins can search cooks by business name.
+  const cookIds = list.filter((p) => p.role === "cook").map((p) => p.id);
+  const { data: kitchens } = cookIds.length
+    ? await supabase
+        .from("kitchens")
+        .select("id, business_name")
+        .in("id", cookIds)
+        .returns<{ id: string; business_name: string | null }[]>()
+    : { data: [] as { id: string; business_name: string | null }[] };
+  const businessNameById = new Map((kitchens ?? []).map((k) => [k.id, k.business_name]));
+  const emailById = await fetchEmailsById(supabase, list.map((p) => p.id));
+
+  const items: PartnerListItem[] = list.map((p) => ({
+    ...p,
+    role: p.role as PartnerListItem["role"],
+    business_name: businessNameById.get(p.id) ?? null,
+    email: emailById.get(p.id) ?? null,
+  }));
 
   return (
     <AdminShell
       title="Manage Partners"
       subtitle="Disabling a partner blocks them from accepting new orders/deliveries without deleting their account."
     >
-      <h2 className="font-display text-lg font-bold" style={{ color: "var(--kb-on-navy)" }}>
-        Cooks ({cooks.length})
-      </h2>
-      <div className="mt-3 space-y-2">
-        {cooks.length === 0 && (
-          <p className="rounded-2xl bg-white p-4 text-sm shadow-lg" style={{ color: "var(--kb-ink-soft)" }}>
-            No approved cooks yet.
-          </p>
-        )}
-        {cooks.map((p) => (
-          <PartnerRow key={p.id} profile={p} />
-        ))}
-      </div>
-
-      <h2 className="mt-6 font-display text-lg font-bold" style={{ color: "var(--kb-on-navy)" }}>
-        Riders ({riders.length})
-      </h2>
-      <div className="mt-3 space-y-2">
-        {riders.length === 0 && (
-          <p className="rounded-2xl bg-white p-4 text-sm shadow-lg" style={{ color: "var(--kb-ink-soft)" }}>
-            No approved riders yet.
-          </p>
-        )}
-        {riders.map((p) => (
-          <PartnerRow key={p.id} profile={p} />
-        ))}
-      </div>
-
-      <h2 className="mt-6 font-display text-lg font-bold" style={{ color: "var(--kb-on-navy)" }}>
-        Pickers ({pickers.length})
-      </h2>
-      <div className="mt-3 space-y-2">
-        {pickers.length === 0 && (
-          <p className="rounded-2xl bg-white p-4 text-sm shadow-lg" style={{ color: "var(--kb-ink-soft)" }}>
-            No approved pickers yet.
-          </p>
-        )}
-        {pickers.map((p) => (
-          <PartnerRow key={p.id} profile={p} />
-        ))}
-      </div>
+      <PartnerFinder partners={items} />
     </AdminShell>
-  );
-}
-
-function PartnerRow({ profile }: { profile: Profile }) {
-  return (
-    <div className="flex items-center justify-between rounded-2xl bg-white p-4 shadow-lg" style={{ color: "var(--kb-ink)" }}>
-      <div>
-        <p className="text-sm font-semibold">{profile.full_name || "(no name on file)"}</p>
-        <p className="text-xs" style={{ color: "var(--kb-ink-soft)" }}>
-          {profile.is_active ? "Active" : "Blocked"}
-        </p>
-      </div>
-      <div className="flex items-center gap-2">
-        <ActionButton
-          action={setPartnerActive.bind(null, profile.id, !profile.is_active)}
-          label={profile.is_active ? "Block" : "Reinstate"}
-          pendingLabel="Saving…"
-          background={profile.is_active ? "var(--kb-danger)" : "var(--kb-green-deep)"}
-        />
-        <ActionButton
-          action={deleteTestPartner.bind(null, profile.id, profile.role as "cook" | "rider" | "picker")}
-          label="Delete"
-          pendingLabel="Deleting…"
-          background="var(--kb-cream)"
-          color="var(--kb-danger)"
-          confirmMessage={`Delete ${profile.full_name || "this partner"}? This removes their profile, application, and kitchen/menu data.`}
-        />
-      </div>
-    </div>
   );
 }
