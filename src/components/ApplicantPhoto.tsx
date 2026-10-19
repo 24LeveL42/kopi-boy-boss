@@ -1,5 +1,5 @@
 // Must stay in sync with the rider-photos bucket in the Partner app's
-// docs/supabase-schema.sql (sections 23 + 25) — riders and pickers both upload there.
+// docs/supabase-schema.sql (sections 23 + 25) — riders upload there.
 const APPLICANT_PHOTO_BUCKET = "rider-photos";
 
 /**
@@ -14,7 +14,7 @@ function isOwnApplicantPhoto(url: string, userId: string) {
   return url.startsWith(`${base}/storage/v1/object/public/${APPLICANT_PHOTO_BUCKET}/${userId}/`);
 }
 
-/** Photo submitted with a rider/picker application, for HQ to verify identity before approving. */
+/** Photo submitted with a rider application, for HQ to verify identity before approving. */
 export function ApplicantPhoto({ url, userId, name }: { url: string | null; userId: string; name: string }) {
   const box = "flex h-20 w-20 shrink-0 items-center justify-center rounded-xl text-center text-[10px] leading-tight";
 

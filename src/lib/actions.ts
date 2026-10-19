@@ -12,7 +12,7 @@ import { createClient } from "@/lib/supabase/server";
 async function setRoleUnlessAdmin(
   supabase: Awaited<ReturnType<typeof createClient>>,
   userId: string,
-  newRole: "cook" | "rider" | "picker"
+  newRole: "cook" | "rider"
 ) {
   const { data: existing, error: readError } = await supabase
     .from("profiles")
@@ -99,40 +99,6 @@ export async function rejectRiderApplication(applicationId: string) {
   revalidatePath("/");
 }
 
-export async function approvePickerApplication(applicationId: string, applicantUserId: string) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) throw new Error("Not signed in.");
-
-  const { error } = await supabase
-    .from("picker_applications")
-    .update({ status: "approved", reviewed_by: user.id, reviewed_at: new Date().toISOString() })
-    .eq("id", applicationId);
-  if (error) throw new Error(`Couldn't approve application: ${error.message}`);
-
-  await setRoleUnlessAdmin(supabase, applicantUserId, "picker");
-
-  revalidatePath("/");
-}
-
-export async function rejectPickerApplication(applicationId: string) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) throw new Error("Not signed in.");
-
-  const { error } = await supabase
-    .from("picker_applications")
-    .update({ status: "rejected", reviewed_by: user.id, reviewed_at: new Date().toISOString() })
-    .eq("id", applicationId);
-  if (error) throw new Error(`Couldn't reject application: ${error.message}`);
-
-  revalidatePath("/");
-}
-
 export async function setPartnerActive(partnerId: string, isActive: boolean) {
   const supabase = await createClient();
   const { error } = await supabase.from("profiles").update({ is_active: isActive }).eq("id", partnerId);
@@ -144,13 +110,13 @@ export async function setPartnerActive(partnerId: string, isActive: boolean) {
 }
 
 /**
- * Fully removes a test cook/rider/picker: their profile row plus any
+ * Fully removes a test cook/rider: their profile row plus any
  * application, kitchen, and menu records tied to them, so they can go
  * through apply -> approve from scratch. For testing only — this does
  * not delete their actual Supabase Auth login, so they can sign back in
  * and will land back on the sign-up flow.
  */
-export async function deleteTestPartner(partnerId: string, role: "cook" | "rider" | "picker") {
+export async function deleteTestPartner(partnerId: string, role: "cook" | "rider") {
   const supabase = await createClient();
 
   if (role === "cook") {
@@ -162,9 +128,6 @@ export async function deleteTestPartner(partnerId: string, role: "cook" | "rider
     if (e3) throw new Error(`Couldn't delete application: ${e3.message}`);
   } else if (role === "rider") {
     const { error } = await supabase.from("rider_applications").delete().eq("user_id", partnerId);
-    if (error) throw new Error(`Couldn't delete application: ${error.message}`);
-  } else if (role === "picker") {
-    const { error } = await supabase.from("picker_applications").delete().eq("user_id", partnerId);
     if (error) throw new Error(`Couldn't delete application: ${error.message}`);
   }
 

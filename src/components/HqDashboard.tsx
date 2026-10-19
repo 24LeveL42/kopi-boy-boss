@@ -6,10 +6,8 @@ import {
   rejectCookApplication,
   approveRiderApplication,
   rejectRiderApplication,
-  approvePickerApplication,
-  rejectPickerApplication,
 } from "@/lib/actions";
-import type { CookApplication, RiderApplication, PickerApplication, Profile } from "@/lib/types-auth";
+import type { CookApplication, RiderApplication, Profile } from "@/lib/types-auth";
 import { ActionButton } from "./ActionButton";
 import { ApplicantPhoto } from "./ApplicantPhoto";
 import { ContactLine } from "./ContactLine";
@@ -21,7 +19,6 @@ export async function HqDashboard() {
   const [
     { data: pendingCooks },
     { data: pendingRiders },
-    { data: pendingPickers },
     { count: activeMerchants },
     { count: activeRiders },
   ] = await Promise.all([
@@ -38,12 +35,6 @@ export async function HqDashboard() {
       .order("created_at", { ascending: true })
       .returns<RiderApplication[]>(),
     supabase
-      .from("picker_applications")
-      .select("*")
-      .eq("status", "pending")
-      .order("created_at", { ascending: true })
-      .returns<PickerApplication[]>(),
-    supabase
       .from("profiles")
       .select("*", { count: "exact", head: true })
       .eq("role", "cook")
@@ -57,11 +48,10 @@ export async function HqDashboard() {
 
   const cooks = pendingCooks ?? [];
   const riders = pendingRiders ?? [];
-  const pickers = pendingPickers ?? [];
-  const totalPending = cooks.length + riders.length + pickers.length;
+  const totalPending = cooks.length + riders.length;
 
   // Pull applicant name/phone/email for every pending application.
-  const applicantIds = [...cooks, ...riders, ...pickers].map((a) => a.user_id);
+  const applicantIds = [...cooks, ...riders].map((a) => a.user_id);
   const [{ data: applicantProfiles }, emailById] = await Promise.all([
     applicantIds.length
       ? supabase.from("profiles").select("*").in("id", applicantIds).returns<Profile[]>()
@@ -181,44 +171,6 @@ export async function HqDashboard() {
                       />
                       <ActionButton
                         action={rejectRiderApplication.bind(null, app.id)}
-                        label="Reject"
-                        pendingLabel="Rejecting…"
-                        background="var(--kb-cream)"
-                        color="var(--kb-ink)"
-                      />
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-
-            {pickers.map((app) => {
-              const applicant = applicantById.get(app.user_id);
-              return (
-                <div key={app.id} className="rounded-2xl bg-white p-4 shadow-lg" style={{ color: "var(--kb-ink)" }}>
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      <ApplicantPhoto url={app.photo_url} userId={app.user_id} name={applicant?.full_name || "the applicant"} />
-                      <div>
-                        <p className="text-sm font-semibold">Picker application</p>
-                        <p className="mt-1 text-xs font-medium" style={{ color: "var(--kb-ink)" }}>
-                          {applicant?.full_name || "(no name on file)"}
-                        </p>
-                        <ContactLine phone={applicant?.phone} email={emailById.get(app.user_id)} />
-                        {app.note && (
-                          <p className="mt-1 text-xs" style={{ color: "var(--kb-ink-soft)" }}>{app.note}</p>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex gap-2">
-                      <ActionButton
-                        action={approvePickerApplication.bind(null, app.id, app.user_id)}
-                        label="Approve"
-                        pendingLabel="Approving…"
-                        background="var(--kb-green-deep)"
-                      />
-                      <ActionButton
-                        action={rejectPickerApplication.bind(null, app.id)}
                         label="Reject"
                         pendingLabel="Rejecting…"
                         background="var(--kb-cream)"

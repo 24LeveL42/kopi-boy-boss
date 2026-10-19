@@ -6,7 +6,7 @@ import { ActionButton } from "@/components/ActionButton";
 import { ContactLine } from "@/components/ContactLine";
 import type { Profile } from "@/lib/types-auth";
 
-type PartnerRole = "cook" | "rider" | "picker";
+type PartnerRole = "cook" | "rider";
 
 export type PartnerListItem = Profile & {
   role: PartnerRole;
@@ -19,14 +19,13 @@ export type PartnerListItem = Profile & {
 const CATEGORIES: { role: PartnerRole; label: string; empty: string }[] = [
   { role: "cook", label: "Cooks", empty: "No approved cooks yet." },
   { role: "rider", label: "Riders", empty: "No approved riders yet." },
-  { role: "picker", label: "Pickers", empty: "No approved pickers yet." },
 ];
 
 export function PartnerFinder({ partners }: { partners: PartnerListItem[] }) {
   const [role, setRole] = useState<PartnerRole>("cook");
   const [query, setQuery] = useState("");
 
-  const counts = { cook: 0, rider: 0, picker: 0 };
+  const counts = { cook: 0, rider: 0 };
   for (const p of partners) counts[p.role]++;
 
   const category = CATEGORIES.find((c) => c.role === role)!;

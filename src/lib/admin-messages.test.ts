@@ -7,6 +7,7 @@ import {
   messagesForView,
   normalizeAdminReply,
   parseInboxView,
+  senderRoleLabel,
   type AdminMessageStatus,
 } from "./admin-messages.ts";
 
@@ -60,4 +61,12 @@ test("normalizeAdminReply trims and enforces the 500-character limit", () => {
   assert.equal(normalizeAdminReply("   "), null);
   assert.equal(normalizeAdminReply("x".repeat(ADMIN_REPLY_MAX_LENGTH)), "x".repeat(500));
   assert.equal(normalizeAdminReply("x".repeat(ADMIN_REPLY_MAX_LENGTH + 1)), null);
+});
+
+test("senderRoleLabel names cooks and riders, everyone else is Partner", () => {
+  assert.equal(senderRoleLabel("cook"), "Cook");
+  assert.equal(senderRoleLabel("rider"), "Rider");
+  assert.equal(senderRoleLabel("picker"), "Partner");
+  assert.equal(senderRoleLabel(null), "Partner");
+  assert.equal(senderRoleLabel(undefined), "Partner");
 });

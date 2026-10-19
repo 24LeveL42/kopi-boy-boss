@@ -1,5 +1,6 @@
 export interface Profile {
   id: string;
+  /** "picker" is a retired role: the DB may still hold it, but Boss no longer lists or approves pickers. */
   role: "customer" | "cook" | "rider" | "picker" | "admin";
   full_name: string | null;
   phone: string | null;
@@ -26,16 +27,6 @@ export interface RiderApplication {
   user_id: string;
   vehicle_type: string | null;
   license_plate: string | null;
-  /** Public URL in the rider-photos bucket, snapshot submitted with the application. */
-  photo_url: string | null;
-  status: "pending" | "approved" | "rejected";
-  created_at: string;
-}
-
-export interface PickerApplication {
-  id: string;
-  user_id: string;
-  note: string | null;
   /** Public URL in the rider-photos bucket, snapshot submitted with the application. */
   photo_url: string | null;
   status: "pending" | "approved" | "rejected";

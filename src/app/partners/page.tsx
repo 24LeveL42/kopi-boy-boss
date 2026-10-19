@@ -14,7 +14,7 @@ export default async function PartnersPage() {
   const { data: partners } = await supabase
     .from("profiles")
     .select("*")
-    .in("role", ["cook", "rider", "picker"])
+    .in("role", ["cook", "rider"])
     .order("created_at", { ascending: false })
     .returns<Profile[]>();
 

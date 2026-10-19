@@ -62,6 +62,13 @@ export function badgeLabel(openCount: number | null | undefined): string | null 
   return openCount > 99 ? "99+" : String(Math.floor(openCount));
 }
 
+/** Role shown next to a sender's name: cook or rider; anything else (e.g. the retired picker role) shows as Partner. */
+export function senderRoleLabel(role: string | null | undefined): string {
+  if (role === "cook") return "Cook";
+  if (role === "rider") return "Rider";
+  return "Partner";
+}
+
 /** Trims a reply; null when there's nothing sendable or it's over the limit. */
 export function normalizeAdminReply(raw: string): string | null {
   const body = raw.trim();

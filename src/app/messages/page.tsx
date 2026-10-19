@@ -12,6 +12,7 @@ import {
   countByStatus,
   messagesForView,
   parseInboxView,
+  senderRoleLabel,
   type AdminMessageRow,
 } from "@/lib/admin-messages";
 
@@ -90,7 +91,7 @@ export default async function MessagesPage({ searchParams }: { searchParams: Pro
                 key={m.id}
                 message={m}
                 senderName={sender?.full_name || `Partner ${m.sender_id.slice(0, 8)}`}
-                senderRole={m.sender_role || sender?.role || "partner"}
+                senderRole={senderRoleLabel(m.sender_role || sender?.role)}
                 senderBlocked={sender ? !sender.is_active : false}
                 sentAt={formatSgTime(m.created_at)}
                 repliedAt={m.replied_at ? formatSgTime(m.replied_at) : null}
