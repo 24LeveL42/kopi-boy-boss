@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { LoginForm } from "@/components/LoginForm";
 import { NotAuthorized } from "@/components/NotAuthorized";
 import { AdminShell } from "@/components/AdminShell";
@@ -43,6 +44,15 @@ export default async function PastOrdersPage({ searchParams }: { searchParams: P
         r.rider ? <span key="r">{r.rider}</span> : <span key="r" style={{ color: "var(--oc-text-soft)" }}>—</span>,
         <div key="s" className="flex flex-wrap items-center gap-1.5">
           <StatusPill tone={STAGE_TONE[r.stage]}>{outcome}</StatusPill>
+          {r.stage === "delivered" && (
+            <Link
+              href={`/orders/${order.id}/route`}
+              className="rounded-lg px-2.5 py-1 text-xs font-medium text-white"
+              style={{ background: "var(--oc-accent)" }}
+            >
+              Replay route
+            </Link>
+          )}
           {r.stage !== "delivered" && order.payment_status === "paid" && (
             <StatusPill tone="amber" title="payment_status is 'paid' on an order that didn't complete">Was paid</StatusPill>
           )}

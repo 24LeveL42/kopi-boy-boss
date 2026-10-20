@@ -57,7 +57,22 @@ export default async function LiveOrdersPage({
         <Cell key="o" main={<span className="font-mono">{shortId(order.id)}</span>} sub={formatSgTime(order.created_at)} />,
         <span key="m">{r.merchant}</span>,
         <Cell key="c" main={r.customer} sub={r.customerPhone} />,
-        r.rider ? <span key="r">{r.rider}</span> : <span key="r" style={{ color: "var(--oc-text-soft)" }}>—</span>,
+        r.rider && r.delivery?.rider_id ? (
+          <div key="r">
+            <span>{r.rider}</span>
+            {r.delivery.status === "accepted" && (
+              <Link
+                href={`/riders?view=map&rider=${r.delivery.rider_id}`}
+                className="mt-1 block w-fit rounded-lg px-2.5 py-1 text-xs font-medium text-white"
+                style={{ background: "var(--oc-accent)" }}
+              >
+                Track rider
+              </Link>
+            )}
+          </div>
+        ) : (
+          <span key="r" style={{ color: "var(--oc-text-soft)" }}>—</span>
+        ),
         <div key="s" className="flex flex-wrap items-center gap-1.5">
           <StatusPill tone={STAGE_TONE[r.stage]}>{STAGE_LABEL[r.stage]}</StatusPill>
           {r.stage === "awaiting_payment" && <PaymentCountdown decidedAt={order.decided_at} serverNow={now} />}

@@ -7,6 +7,7 @@ import {
   type OrderFacts,
   type OrderStage,
 } from "@/lib/ops";
+import { toLatLng, type RoutePoint } from "@/lib/rider-tracking";
 
 /**
  * Read-only loaders for the Operations Centre. Every query runs with the
@@ -158,4 +159,101 @@ export async function countWhere(supabase: Client, table: string, column: string
 /** The time a server page renders at; passed down so ticking client clocks start from the same instant. */
 export function renderTime(): number {
   return Date.now();
+}
+
+export interface JobDetails {
+  deliveryId: string;
+  orderId: string;
+  kitchenId: string;
+  status: string;
+  merchant: string;
+  pickupAddress: string | null;
+  pickup: [number, number] | null;
+  dropoff: [number, number] | null;
+  acceptedAt: string | null;
+  pickedUpAt: string | null;
+  completedAt: string | null;
+}
+
+type JobDelivery = {
+  id: string;
+  order_id: string;
+  kitchen_id: string;
+  status: string;
+  accepted_at: string | null;
+  picked_up_at: string | null;
+  completed_at: string | null;
+};
+
+/**
+ * One delivery request with its pickup (kitchen_addresses, admin-readable) and
+ * drop-off (orders.customer_lat/customer_lng) points. Used by the Riders map
+ * panel (browser client) and the route replay page (server client).
+ */
+export async function loadJobDetails(
+  supabase: Client,
+  deliveryRequestId: string
+): Promise<{ job: JobDetails | null; error: string | null }> {
+  const { data: d, error } = await supabase
+    .from("delivery_requests")
+    .select("id, order_id, kitchen_id, status, accepted_at, picked_up_at, completed_at")
+    .eq("id", deliveryRequestId)
+    .maybeSingle<JobDelivery>();
+  if (error) return { job: null, error: error.message };
+  if (!d) return { job: null, error: null };
+
+  const [order, address, kitchen] = await Promise.all([
+    supabase.from("orders").select("customer_lat, customer_lng").eq("id", d.order_id).maybeSingle<{
+      customer_lat: number | string | null;
+      customer_lng: number | string | null;
+    }>(),
+    supabase.from("kitchen_addresses").select("business_address, latitude, longitude").eq("kitchen_id", d.kitchen_id).maybeSingle<{
+      business_address: string | null;
+      latitude: number | string | null;
+      longitude: number | string | null;
+    }>(),
+    supabase.from("kitchens").select("business_name").eq("id", d.kitchen_id).maybeSingle<{ business_name: string | null }>(),
+  ]);
+
+  return {
+    job: {
+      deliveryId: d.id,
+      orderId: d.order_id,
+      kitchenId: d.kitchen_id,
+      status: d.status,
+      merchant: kitchen.data?.business_name || `Kitchen ${d.kitchen_id.slice(0, 8)}`,
+      pickupAddress: address.data?.business_address ?? null,
+      pickup: toLatLng(address.data?.latitude, address.data?.longitude),
+      dropoff: toLatLng(order.data?.customer_lat, order.data?.customer_lng),
+      acceptedAt: d.accepted_at,
+      pickedUpAt: d.picked_up_at,
+      completedAt: d.completed_at,
+    },
+    error: order.error?.message ?? address.error?.message ?? kitchen.error?.message ?? null,
+  };
+}
+
+/** PostgREST returns at most 1,000 rows per request by default, so routes are read page by page. */
+const ROUTE_PAGE = 1000;
+const ROUTE_MAX_POINTS = 20_000;
+
+/** Every saved position for one delivery request, oldest first. */
+export async function loadRoutePoints(
+  supabase: Client,
+  deliveryRequestId: string
+): Promise<{ points: RoutePoint[]; error: string | null }> {
+  const points: RoutePoint[] = [];
+  for (let from = 0; from < ROUTE_MAX_POINTS; from += ROUTE_PAGE) {
+    const { data, error } = await supabase
+      .from("rider_location_points")
+      .select("id, lat, lng, accuracy_m, recorded_at")
+      .eq("delivery_request_id", deliveryRequestId)
+      .order("recorded_at", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, from + ROUTE_PAGE - 1);
+    if (error) return { points, error: error.message };
+    points.push(...((data ?? []) as RoutePoint[]));
+    if (!data || data.length < ROUTE_PAGE) break;
+  }
+  return { points, error: null };
 }

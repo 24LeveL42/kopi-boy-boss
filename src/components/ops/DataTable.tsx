@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { countLabel, matchesSearch } from "@/lib/admin-lists";
 import { EmptyState } from "./EmptyState";
 
@@ -14,6 +15,8 @@ export type TableRow = {
   cells: React.ReactNode[];
   /** Faded details for a blocked account; the last cell (actions) stays fully usable. */
   muted?: boolean;
+  /** Clicking the row (outside its links and buttons) opens this page. */
+  rowHref?: string;
 };
 
 /** Search field + "12 of 40 …" count shared by DataTable and SearchableList. */
@@ -36,14 +39,14 @@ function SearchBar({
 }) {
   const searching = query.trim() !== "";
   return (
-    <div className="flex items-center gap-3 border-b px-4 py-3" style={{ borderColor: "var(--oc-line)" }}>
+    <div className="flex flex-wrap items-center gap-3 border-b px-4 py-3" style={{ borderColor: "var(--oc-line)" }}>
       <input
         type="search"
         value={query}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         aria-label={`Search ${noun}`}
-        className="w-96 rounded-lg border px-3 py-2 text-sm outline-none focus:border-[var(--oc-accent)]"
+        className="w-full rounded-lg border sm:w-96 px-3 py-2 text-sm outline-none focus:border-[var(--oc-accent)]"
         style={{ borderColor: "var(--oc-line)", background: "var(--oc-bg)", color: "var(--oc-text)" }}
       />
       <p className="text-xs" style={{ color: "var(--oc-text-soft)" }} aria-live="polite">
@@ -73,6 +76,7 @@ export function DataTable({
   toolbar?: React.ReactNode;
 }) {
   const [query, setQuery] = useState(initialQuery);
+  const router = useRouter();
   const results = rows.filter((r) => matchesSearch(query, r.search));
 
   return (
@@ -91,45 +95,55 @@ export function DataTable({
       ) : results.length === 0 ? (
         <EmptyState title={`No ${noun} match “${query.trim()}”`} />
       ) : (
-        <table className="w-full border-collapse text-sm">
-          <thead>
-            <tr>
-              {columns.map((c) => (
-                <th
-                  key={c.label}
-                  scope="col"
-                  className={`border-b px-4 py-2.5 text-xs font-semibold uppercase tracking-wide ${
-                    c.align === "right" ? "text-right" : "text-left"
-                  } ${c.className ?? ""}`}
-                  style={{ borderColor: "var(--oc-line)", color: "var(--oc-text-soft)" }}
-                >
-                  {c.label}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {results.map((r) => (
-              <tr
-                key={r.id}
-                data-blocked={r.muted || undefined}
-                className="border-b last:border-b-0 hover:bg-[var(--oc-bg)]"
-                style={{ borderColor: "var(--oc-line)" }}
-              >
-                {r.cells.map((cell, i) => (
-                  <td
-                    key={i}
-                    className={`px-4 py-3 align-top ${columns[i]?.align === "right" ? "text-right" : ""} ${
-                      r.muted && i < r.cells.length - 1 ? "opacity-50" : ""
-                    }`}
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[860px] border-collapse text-sm">
+            <thead>
+              <tr>
+                {columns.map((c) => (
+                  <th
+                    key={c.label}
+                    scope="col"
+                    className={`border-b px-4 py-2.5 text-xs font-semibold uppercase tracking-wide ${
+                      c.align === "right" ? "text-right" : "text-left"
+                    } ${c.className ?? ""}`}
+                    style={{ borderColor: "var(--oc-line)", color: "var(--oc-text-soft)" }}
                   >
-                    {cell}
-                  </td>
+                    {c.label}
+                  </th>
                 ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {results.map((r) => (
+                <tr
+                  key={r.id}
+                  data-blocked={r.muted || undefined}
+                  onClick={
+                    r.rowHref
+                      ? (e) => {
+                          if ((e.target as HTMLElement).closest("a, button, input, textarea, select")) return;
+                          router.push(r.rowHref!);
+                        }
+                      : undefined
+                  }
+                  className={`border-b last:border-b-0 hover:bg-[var(--oc-bg)] ${r.rowHref ? "cursor-pointer" : ""}`}
+                  style={{ borderColor: "var(--oc-line)" }}
+                >
+                  {r.cells.map((cell, i) => (
+                    <td
+                      key={i}
+                      className={`px-4 py-3 align-top ${columns[i]?.align === "right" ? "text-right" : ""} ${
+                        r.muted && i < r.cells.length - 1 ? "opacity-50" : ""
+                      }`}
+                    >
+                      {cell}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </>
   );

@@ -281,7 +281,7 @@ export async function Overview() {
         <LoadError key={what} what={what} message={message} />
       ))}
 
-      <div className="grid grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
         <Kpi href="/orders" label="Live orders" value={liveRows.length} />
         <Kpi href="/riders" label="Riders on a delivery" value={ridersOnDelivery(liveRows.flatMap((r) => r.deliveries)).size} />
         <Kpi href="/orders/past" label="Delivered today" value={deliveredToday.count} />
@@ -290,8 +290,8 @@ export async function Overview() {
         <Kpi href="/messages" label="Unread messages" value={openMessageCount.count} />
       </div>
 
-      <div className="mt-6 grid grid-cols-3 gap-6">
-        <Card className="col-span-2 overflow-hidden">
+      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <Card className="overflow-hidden lg:col-span-2">
           <SectionTitle aside={<span className="text-xs" style={{ color: "var(--oc-text-soft)" }}>Most urgent first</span>}>
             Needs your attention {sortedAttention.length > 0 && `(${sortedAttention.length})`}
           </SectionTitle>
@@ -302,13 +302,13 @@ export async function Overview() {
               {sortedAttention.map((item) => (
                 <li
                   key={item.key}
-                  className="flex items-center gap-4 border-b px-4 py-3 last:border-b-0"
+                  className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b px-4 py-3 last:border-b-0 sm:flex-nowrap"
                   style={{ borderColor: "var(--oc-line)" }}
                 >
-                  <div className="w-36 shrink-0">
+                  <div className="shrink-0 sm:w-36">
                     <StatusPill tone={ATTENTION_TONE[item.kind]}>{ATTENTION_LABEL[item.kind]}</StatusPill>
                   </div>
-                  <div className="min-w-0 flex-1">
+                  <div className="min-w-0 basis-full sm:basis-auto sm:flex-1">
                     <p className="truncate text-sm font-medium">{item.title}</p>
                     <p className="truncate text-xs" style={{ color: "var(--oc-text-soft)" }}>
                       {item.detail}
@@ -361,7 +361,7 @@ export async function Overview() {
 
       <Card className="mt-6 overflow-hidden">
         <SectionTitle>Order pipeline right now</SectionTitle>
-        <div className="flex items-stretch gap-2 p-4">
+        <div className="flex flex-col items-stretch gap-2 p-4 sm:flex-row">
           {LIVE_STAGES.map((stage, i) => (
             <div key={stage} className="flex flex-1 items-center gap-2">
               <Link

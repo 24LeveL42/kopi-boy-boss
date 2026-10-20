@@ -59,7 +59,7 @@ export function TableSkeleton({ rows = 6, columns = 6 }: { rows?: number; column
   return (
     <section className="overflow-hidden rounded-[14px] border bg-white" style={{ borderColor: "var(--oc-line)" }}>
       <div className="border-b px-4 py-3" style={{ borderColor: "var(--oc-line)" }}>
-        <Bone className="h-9 w-96 rounded-lg" />
+        <Bone className="h-9 w-full rounded-lg sm:w-96" />
       </div>
       {Array.from({ length: rows + 1 }, (_, i) => (
         <div key={i} className="flex gap-6 border-b px-4 py-3.5 last:border-b-0" style={{ borderColor: "var(--oc-line)" }}>

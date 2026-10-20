@@ -63,7 +63,12 @@ function activeHref(pathname: string): string | null {
  */
 function useNavCounts(): Counts {
   const pathname = usePathname();
-  const [counts, setCounts] = useState<Counts>({ liveOrders: null, pendingCooks: null, pendingRiders: null, openMessages: null });
+  const [counts, setCounts] = useState<Counts>({
+    liveOrders: null,
+    pendingCooks: null,
+    pendingRiders: null,
+    openMessages: null,
+  });
 
   useEffect(() => {
     const supabase = createClient();
@@ -100,7 +105,17 @@ function useNavCounts(): Counts {
   return counts;
 }
 
-function NavLink({ href, label, active, badge }: { href: string; label: string; active: boolean; badge?: React.ReactNode }) {
+function NavLink({
+  href,
+  label,
+  active,
+  badge,
+}: {
+  href: string;
+  label: string;
+  active: boolean;
+  badge?: React.ReactNode;
+}) {
   return (
     <Link
       href={href}
@@ -118,28 +133,72 @@ function NavLink({ href, label, active, badge }: { href: string; label: string; 
   );
 }
 
+function Brand() {
+  return (
+    <Link href="/" className="flex items-center gap-3 px-2" aria-label="Kopi Boy Operations Centre — Overview">
+      <span className="flex size-10 items-center justify-center rounded-xl bg-white">
+        <Logo size={26} showWordmark={false} />
+      </span>
+      <span className="leading-tight">
+        <span className="block text-sm font-semibold">Kopi Boy</span>
+        <span className="block text-xs" style={{ color: "var(--oc-on-ink-soft)" }}>
+          Operations Centre
+        </span>
+      </span>
+    </Link>
+  );
+}
+
+/** Desktop: fixed sidebar. Phone/tablet: top bar whose Menu button opens the same links as a drawer. */
 export function OpsSidebar() {
   const pathname = usePathname();
-  const current = activeHref(pathname);
   const counts = useNavCounts();
+  const [openOn, setOpenOn] = useState<string | null>(null);
+  // The drawer belongs to the page it was opened on, so navigating closes it.
+  const menuOpen = openOn === pathname;
 
   return (
-    <aside
-      className="sticky top-0 flex h-screen w-64 shrink-0 flex-col overflow-y-auto px-3 py-5"
-      style={{ background: "var(--oc-ink)", color: "var(--oc-on-ink)" }}
-    >
-      <Link href="/" className="flex items-center gap-3 px-2" aria-label="Kopi Boy Operations Centre — Overview">
-        <span className="flex size-10 items-center justify-center rounded-xl bg-white">
-          <Logo size={26} showWordmark={false} />
-        </span>
-        <span className="leading-tight">
-          <span className="block text-sm font-semibold">Kopi Boy</span>
-          <span className="block text-xs" style={{ color: "var(--oc-on-ink-soft)" }}>
-            Operations Centre
-          </span>
-        </span>
-      </Link>
+    <>
+      <div
+        className="sticky top-0 z-[1200] flex items-center justify-between px-3 py-2.5 lg:hidden"
+        style={{ background: "var(--oc-ink)", color: "var(--oc-on-ink)" }}
+      >
+        <Brand />
+        <button
+          type="button"
+          onClick={() => setOpenOn(menuOpen ? null : pathname)}
+          aria-expanded={menuOpen}
+          aria-controls="ops-mobile-menu"
+          className="rounded-lg px-3 py-1.5 text-sm font-medium"
+          style={{ background: "var(--oc-ink-raised)" }}
+        >
+          {menuOpen ? "Close" : "Menu"}
+        </button>
+      </div>
+      {menuOpen && (
+        <div
+          id="ops-mobile-menu"
+          className="fixed inset-x-0 top-[60px] bottom-0 z-[1200] overflow-y-auto px-3 pb-6 lg:hidden"
+          style={{ background: "var(--oc-ink)", color: "var(--oc-on-ink)" }}
+        >
+          <NavLinks pathname={pathname} counts={counts} />
+        </div>
+      )}
+      <aside
+        className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col overflow-y-auto px-3 py-5 lg:flex"
+        style={{ background: "var(--oc-ink)", color: "var(--oc-on-ink)" }}
+      >
+        <Brand />
+        <NavLinks pathname={pathname} counts={counts} />
+      </aside>
+    </>
+  );
+}
 
+function NavLinks({ pathname, counts }: { pathname: string; counts: Counts }) {
+  const current = activeHref(pathname);
+  return (
+    <div className="flex flex-1 flex-col">
       <nav className="mt-7 space-y-0.5" aria-label="Operations Centre">
         {MAIN_LINKS.map((link) => {
           const label = link.count ? badgeLabel(counts[link.count]) : null;
@@ -166,7 +225,10 @@ export function OpsSidebar() {
         })}
       </nav>
 
-      <p className="mt-6 px-3 text-[11px] font-semibold uppercase tracking-wider" style={{ color: "var(--oc-on-ink-soft)" }}>
+      <p
+        className="mt-6 px-3 text-[11px] font-semibold uppercase tracking-wider"
+        style={{ color: "var(--oc-on-ink-soft)" }}
+      >
         More
       </p>
       <nav className="mt-1 space-y-0.5" aria-label="More admin screens">
@@ -178,6 +240,6 @@ export function OpsSidebar() {
       <div className="mt-auto pt-6">
         <SignOutButton />
       </div>
-    </aside>
+    </div>
   );
 }

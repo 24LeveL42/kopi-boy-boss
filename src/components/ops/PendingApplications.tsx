@@ -57,7 +57,7 @@ function Shell({ title, count, children }: { title: string; count: number; child
   );
 }
 
-const rowClass = "flex items-center justify-between gap-6 border-b px-4 py-3 last:border-b-0";
+const rowClass = "flex flex-col gap-3 border-b px-4 py-3 last:border-b-0 sm:flex-row sm:items-center sm:justify-between sm:gap-6";
 const soft = { color: "var(--oc-text-soft)" };
 
 /** Cook sign-ups waiting for HQ, with the same Approve / Reject actions the old Command Centre had. */
@@ -70,7 +70,7 @@ export function PendingCookApplications({ loaded }: { loaded: Loaded<CookApplica
         const applicant = applicantById.get(app.user_id);
         return (
           <li key={app.id} className={rowClass} style={{ borderColor: "var(--oc-line)" }}>
-            <div className="grid min-w-0 flex-1 grid-cols-3 gap-6 text-sm">
+            <div className="grid min-w-0 flex-1 grid-cols-1 gap-3 text-sm sm:grid-cols-3 sm:gap-6">
               <div className="min-w-0">
                 <p className="font-semibold">{app.business_name}</p>
                 <p className="text-xs" style={soft}>

@@ -2,8 +2,8 @@ import { OpsSidebar } from "./ops/OpsSidebar";
 
 /**
  * Operations Centre frame for every signed-in admin screen: dark sidebar on
- * the left, light main area with the page title. Desktop only — below
- * ~1100px the page scrolls sideways rather than reflowing.
+ * the left, light main area with the page title. Below the lg breakpoint the
+ * sidebar becomes a top bar with a menu drawer, and wide tables scroll sideways.
  */
 export function AdminShell({
   title,
@@ -18,10 +18,10 @@ export function AdminShell({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex min-h-screen min-w-[1100px]">
+    <div className="flex min-h-screen flex-col lg:flex-row">
       <OpsSidebar />
-      <main className="oc-main min-w-0 flex-1 px-8 py-7">
-        <header className="mb-6 flex items-start justify-between gap-6">
+      <main className="oc-main min-w-0 flex-1 px-4 py-5 lg:px-8 lg:py-7">
+        <header className="mb-6 flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
           <div className="min-w-0">
             <h1 className="text-[22px] font-semibold tracking-tight" style={{ color: "var(--oc-text)" }}>
               {title}
