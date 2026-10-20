@@ -1,39 +1,40 @@
-import Link from "next/link";
-import { TopBar } from "./TopBar";
-import { SidebarNav } from "./SidebarNav";
+import { OpsSidebar } from "./ops/OpsSidebar";
 
+/**
+ * Operations Centre frame for every signed-in admin screen: dark sidebar on
+ * the left, light main area with the page title. Desktop only — below
+ * ~1100px the page scrolls sideways rather than reflowing.
+ */
 export function AdminShell({
   title,
   subtitle,
+  actions,
   children,
 }: {
   title: React.ReactNode;
   subtitle?: string;
+  /** Right-hand side of the title row (e.g. a Refresh button). */
+  actions?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
-    <div className="min-h-screen md:flex" style={{ background: "var(--kb-navy)" }}>
-      <aside
-        className="shrink-0 border-b p-4 md:w-56 md:border-b-0 md:border-r"
-        style={{ borderColor: "var(--kb-navy-line)" }}
-      >
-        <TopBar />
-        <SidebarNav />
-      </aside>
-
-      <main className="flex-1 px-4 py-8 sm:px-6">
-        <Link href="/" className="text-sm" style={{ color: "var(--kb-green)" }}>
-          &larr; Back to Command Centre
-        </Link>
-        <h1 className="mt-3 font-display text-xl font-bold" style={{ color: "var(--kb-on-navy)" }}>
-          {title}
-        </h1>
-        {subtitle && (
-          <p className="mt-1 text-sm" style={{ color: "var(--kb-on-navy-soft)" }}>
-            {subtitle}
-          </p>
-        )}
-        <div className="mt-5">{children}</div>
+    <div className="flex min-h-screen min-w-[1100px]">
+      <OpsSidebar />
+      <main className="oc-main min-w-0 flex-1 px-8 py-7">
+        <header className="mb-6 flex items-start justify-between gap-6">
+          <div className="min-w-0">
+            <h1 className="text-[22px] font-semibold tracking-tight" style={{ color: "var(--oc-text)" }}>
+              {title}
+            </h1>
+            {subtitle && (
+              <p className="mt-1 max-w-3xl text-sm" style={{ color: "var(--oc-text-soft)" }}>
+                {subtitle}
+              </p>
+            )}
+          </div>
+          {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
+        </header>
+        {children}
       </main>
     </div>
   );

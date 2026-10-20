@@ -49,7 +49,7 @@ export function AdminMessageCard({
   }
 
   return (
-    <article className="rounded-2xl bg-white p-4 shadow-lg" style={{ color: "var(--kb-ink)" }}>
+    <article className="rounded-[14px] border bg-white p-4" style={{ color: "var(--oc-text)", borderColor: "var(--oc-line)" }}>
       <header className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="text-sm font-semibold">

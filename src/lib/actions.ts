@@ -62,6 +62,7 @@ export async function rejectCookApplication(applicationId: string) {
   if (error) throw new Error(`Couldn't reject application: ${error.message}`);
 
   revalidatePath("/");
+  revalidatePath("/merchants");
 }
 
 export async function approveRiderApplication(applicationId: string, applicantUserId: string) {
@@ -97,6 +98,7 @@ export async function rejectRiderApplication(applicationId: string) {
   if (error) throw new Error(`Couldn't reject application: ${error.message}`);
 
   revalidatePath("/");
+  revalidatePath("/riders");
 }
 
 export async function setPartnerActive(partnerId: string, isActive: boolean) {

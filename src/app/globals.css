@@ -45,11 +45,50 @@
   --kb-cat-drinks-bg: #D3F1F7;
   --kb-cat-drinks-fg: #0E7C99;
 
-  /* System stacks only (no remote font fetch at build time): a warm serif
-     for display headings to read "neighbourhood/community", a clean sans
-     for body/UI. */
+  /* A warm serif for display headings to read "neighbourhood/community";
+     Inter for body/UI (self-hosted via next/font in layout.tsx, so no
+     runtime fetch), with the system stack as fallback. */
   --font-display: Georgia, "Iowan Old Style", "Palatino Linotype", serif;
-  --font-body: -apple-system, "Segoe UI", Roboto, ui-sans-serif, system-ui, sans-serif;
+  --font-body: var(--font-inter), -apple-system, "Segoe UI", Roboto, ui-sans-serif, system-ui, sans-serif;
+
+  /* Operations Centre (signed-in admin screens): dark ink sidebar, light
+     main area, white cards with thin borders, purple accent. */
+  --oc-ink: #1B1A2E;
+  --oc-ink-raised: #2A2942;
+  --oc-on-ink: #F2F1F8;
+  --oc-on-ink-soft: #A3A1BC;
+  --oc-bg: #F6F5F9;
+  --oc-card: #FFFFFF;
+  --oc-line: #E6E4EE;
+  --oc-text: #1B1A2E;
+  --oc-text-soft: #6B6880;
+  --oc-accent: #5B3FD0;
+  --oc-accent-soft: #EEEAFB;
+
+  /* Status pills */
+  --oc-green-bg: #DCF5E8;
+  --oc-green-fg: #137A47;
+  --oc-amber-bg: #FDF0D5;
+  --oc-amber-fg: #94580B;
+  --oc-red-bg: #FDE2E2;
+  --oc-red-fg: #B42318;
+  --oc-blue-bg: #DFEBFD;
+  --oc-blue-fg: #1D5BBF;
+  --oc-purple-bg: #ECE6FC;
+  --oc-purple-fg: #5B3FD0;
+  --oc-grey-bg: #EEEDF2;
+  --oc-grey-fg: #5E5C70;
+}
+
+/* Main area of the Operations Centre. Older screens (Complaints, Messages
+   tabs, Manage Partners) still draw some text with the on-navy tokens; on
+   the light background those tokens become dark ink instead. */
+.oc-main {
+  --kb-on-navy: var(--oc-text);
+  --kb-on-navy-soft: var(--oc-text-soft);
+  --kb-navy-raised: var(--oc-grey-bg);
+  background: var(--oc-bg);
+  color: var(--oc-text);
 }
 
 @theme inline {

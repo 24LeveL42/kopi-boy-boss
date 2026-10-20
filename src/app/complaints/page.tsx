@@ -104,7 +104,7 @@ export default async function ComplaintsPage({ searchParams }: { searchParams: P
             className="rounded-full px-3 py-1.5 font-medium"
             style={
               view === key
-                ? { background: "var(--kb-green)", color: "var(--kb-navy)" }
+                ? { background: "var(--oc-accent)", color: "white" }
                 : { background: "var(--kb-navy-raised)", color: "var(--kb-on-navy-soft)" }
             }
           >

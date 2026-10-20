@@ -1,43 +1,23 @@
-import { TopBar } from "@/components/TopBar";
-import { SidebarNav } from "@/components/SidebarNav";
-import { Bone, CardListSkeleton } from "@/components/Skeleton";
+import { Bone, PageSkeleton, TableSkeleton } from "@/components/Skeleton";
 
-/** Command Centre while its stats and pending applications load. Mirrors HqDashboard. */
+/** Overview while its counts, attention list and feed load. Mirrors components/ops/Overview. */
 export default function Loading() {
   return (
-    <div className="min-h-screen md:flex" style={{ background: "var(--kb-navy)" }}>
-      <aside
-        className="shrink-0 border-b p-4 md:w-56 md:border-b-0 md:border-r"
-        style={{ borderColor: "var(--kb-navy-line)" }}
-      >
-        <TopBar />
-        <SidebarNav />
-      </aside>
-
-      <main className="flex-1 px-4 py-8 sm:px-6" role="status" aria-live="polite">
-        <span className="sr-only">Loading…</span>
-        <h1 className="font-display text-xl font-bold" style={{ color: "var(--kb-on-navy)" }}>
-          Command Centre
-        </h1>
-
-        <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3">
-          {["Active merchants", "Active riders", "Pending applications"].map((label) => (
-            <div key={label} className="rounded-2xl bg-white p-4 shadow-lg">
-              <p className="text-xs" style={{ color: "var(--kb-ink-soft)" }}>
-                {label}
-              </p>
-              <Bone className="mt-2 h-7 w-10" />
-            </div>
-          ))}
+    <PageSkeleton title="Overview">
+      <div className="grid grid-cols-6 gap-3">
+        {Array.from({ length: 6 }, (_, i) => (
+          <div key={i} className="rounded-[14px] border bg-white px-4 py-4" style={{ borderColor: "var(--oc-line)" }}>
+            <Bone className="h-3 w-24" />
+            <Bone className="mt-3 h-8 w-12" />
+          </div>
+        ))}
+      </div>
+      <div className="mt-6 grid grid-cols-3 gap-6">
+        <div className="col-span-2">
+          <TableSkeleton rows={5} columns={3} />
         </div>
-
-        <h2 className="mt-6 font-display text-lg font-bold" style={{ color: "var(--kb-on-navy)" }}>
-          Pending approvals
-        </h2>
-        <div className="mt-3">
-          <CardListSkeleton rows={3} actions={2} />
-        </div>
-      </main>
-    </div>
+        <TableSkeleton rows={5} columns={1} />
+      </div>
+    </PageSkeleton>
   );
 }

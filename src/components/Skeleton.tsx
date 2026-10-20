@@ -53,3 +53,21 @@ export function PageSkeleton({ title, children }: { title?: string; children: Re
     </AdminShell>
   );
 }
+
+/** Operations Centre table card: search bar, header row, then `rows` lines of `columns` cells. */
+export function TableSkeleton({ rows = 6, columns = 6 }: { rows?: number; columns?: number }) {
+  return (
+    <section className="overflow-hidden rounded-[14px] border bg-white" style={{ borderColor: "var(--oc-line)" }}>
+      <div className="border-b px-4 py-3" style={{ borderColor: "var(--oc-line)" }}>
+        <Bone className="h-9 w-96 rounded-lg" />
+      </div>
+      {Array.from({ length: rows + 1 }, (_, i) => (
+        <div key={i} className="flex gap-6 border-b px-4 py-3.5 last:border-b-0" style={{ borderColor: "var(--oc-line)" }}>
+          {Array.from({ length: columns }, (_, j) => (
+            <Bone key={j} className={`flex-1 ${i === 0 ? "h-2.5" : "h-3.5"}`} />
+          ))}
+        </div>
+      ))}
+    </section>
+  );
+}

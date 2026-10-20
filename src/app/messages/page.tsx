@@ -4,6 +4,8 @@ import { NotAuthorized } from "@/components/NotAuthorized";
 import { AdminShell } from "@/components/AdminShell";
 import { AdminMessageCard } from "@/components/AdminMessageCard";
 import { AdminMessagesRealtimeRefresher } from "@/components/AdminMessagesRealtimeRefresher";
+import { SearchableList } from "@/components/ops/DataTable";
+import { Card, EmptyState, LoadError } from "@/components/ops/EmptyState";
 import { hasAdminRole, requireAdmin } from "@/lib/require-admin";
 import { formatSgTime } from "@/lib/complaints";
 import {
@@ -36,9 +38,7 @@ export default async function MessagesPage({ searchParams }: { searchParams: Pro
   if (error) {
     return (
       <AdminShell title="Messages" subtitle={SUBTITLE}>
-        <p className="rounded-2xl bg-white p-5 text-sm shadow-lg" style={{ color: "var(--kb-danger)" }}>
-          Couldn&apos;t load messages: {error.message}
-        </p>
+        <LoadError what="messages" message={error.message} />
       </AdminShell>
     );
   }
@@ -64,7 +64,7 @@ export default async function MessagesPage({ searchParams }: { searchParams: Pro
             className="rounded-full px-3 py-1.5 font-medium"
             style={
               view === t.view
-                ? { background: "var(--kb-green)", color: "var(--kb-navy)" }
+                ? { background: "var(--oc-accent)", color: "white" }
                 : { background: "var(--kb-navy-raised)", color: "var(--kb-on-navy-soft)" }
             }
           >
@@ -74,32 +74,37 @@ export default async function MessagesPage({ searchParams }: { searchParams: Pro
         <AdminMessagesRealtimeRefresher />
       </nav>
 
-      {shown.length === 0 ? (
-        <p className="rounded-2xl bg-white p-5 text-sm shadow-lg" style={{ color: "var(--kb-ink-soft)" }}>
-          {all.length === 0
-            ? "No messages yet. They appear here when a rider or cook writes to HQ from the Partner app."
-            : view === "all"
-              ? "No messages."
-              : `No ${view} messages.`}
-        </p>
-      ) : (
-        <div className="space-y-3">
-          {shown.map((m) => {
+      <Card className="overflow-hidden">
+        <SearchableList
+          key={view}
+          noun="messages"
+          searchPlaceholder="Search sender, message or reply…"
+          empty={
+            <EmptyState title={all.length === 0 ? "Nothing to show yet" : view === "all" ? "No messages" : `No ${view} messages`}>
+              {all.length === 0 && "Messages appear here when a rider or cook writes to HQ from the Partner app."}
+            </EmptyState>
+          }
+          items={shown.map((m) => {
             const sender = senderById.get(m.sender_id);
-            return (
-              <AdminMessageCard
-                key={m.id}
-                message={m}
-                senderName={sender?.full_name || `Partner ${m.sender_id.slice(0, 8)}`}
-                senderRole={senderRoleLabel(m.sender_role || sender?.role)}
-                senderBlocked={sender ? !sender.is_active : false}
-                sentAt={formatSgTime(m.created_at)}
-                repliedAt={m.replied_at ? formatSgTime(m.replied_at) : null}
-              />
-            );
+            const senderName = sender?.full_name || `Partner ${m.sender_id.slice(0, 8)}`;
+            const senderRole = senderRoleLabel(m.sender_role || sender?.role);
+            return {
+              id: m.id,
+              search: [senderName, senderRole, m.message, m.admin_reply],
+              node: (
+                <AdminMessageCard
+                  message={m}
+                  senderName={senderName}
+                  senderRole={senderRole}
+                  senderBlocked={sender ? !sender.is_active : false}
+                  sentAt={formatSgTime(m.created_at)}
+                  repliedAt={m.replied_at ? formatSgTime(m.replied_at) : null}
+                />
+              ),
+            };
           })}
-        </div>
-      )}
+        />
+      </Card>
     </AdminShell>
   );
 }

@@ -18,6 +18,9 @@ export interface CookApplication {
   paynow_uen: string | null;
   /** ACRA registration number; required for every business type except Home Cook (Partner schema section 26). */
   business_uen: string | null;
+  /** Pickup address + 6-digit postal code given at sign-up (Partner schema section 28). */
+  business_address?: string | null;
+  postal_code?: string | null;
   status: "pending" | "approved" | "rejected";
   created_at: string;
 }

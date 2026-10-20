@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { LoginForm } from "@/components/LoginForm";
 import { NotAuthorized } from "@/components/NotAuthorized";
-import { HqDashboard } from "@/components/HqDashboard";
+import { Overview } from "@/components/ops/Overview";
 import type { Profile } from "@/lib/types-auth";
 
 export default async function Home() {
@@ -24,5 +24,5 @@ export default async function Home() {
     return <NotAuthorized />;
   }
 
-  return <HqDashboard />;
+  return <Overview />;
 }

@@ -6,7 +6,6 @@ import { createClient } from "@/lib/supabase/client";
 import { Spinner } from "./Spinner";
 
 export function SignOutButton() {
-  const supabase = createClient();
   const router = useRouter();
   const [pending, startTransition] = useTransition();
 
@@ -14,7 +13,8 @@ export function SignOutButton() {
     startTransition(async () => {
       // On failure the button just re-enables so they can try again.
       try {
-        const { error } = await supabase.auth.signOut();
+        // Created on click, not render: the button also sits in prerendered loading skeletons.
+        const { error } = await createClient().auth.signOut();
         if (error) return;
         router.push("/");
         router.refresh();

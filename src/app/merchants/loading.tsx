@@ -1,9 +1,9 @@
-import { CardListSkeleton, PageSkeleton } from "@/components/Skeleton";
+import { PageSkeleton, TableSkeleton } from "@/components/Skeleton";
 
 export default function Loading() {
   return (
-    <PageSkeleton>
-      <CardListSkeleton rows={4} actions={3} />
+    <PageSkeleton title="Merchants and addresses">
+      <TableSkeleton columns={8} />
     </PageSkeleton>
   );
 }

@@ -1,8 +1,12 @@
 import type { Metadata, Viewport } from "next";
+import { Inter } from "next/font/google";
 import "./globals.css";
 
+// Self-hosted by next/font at build time; feeds --font-body in globals.css.
+const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
+
 export const metadata: Metadata = {
-  title: "Kopi Boy HQ",
+  title: "Kopi Boy Operations Centre",
   description: "Admin control center for Kopi Boy — merchants, riders, orders, complaints, revenue.",
   // iOS "Add to Home Screen": launch full-screen with the KB Admin name.
   // (The home-screen icon comes from src/app/apple-icon.png.)
@@ -15,7 +19,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className="h-full antialiased">
+    <html lang="en" className={`${inter.variable} h-full antialiased`}>
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
   );
