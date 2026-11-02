@@ -2,32 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-
-/**
- * Approving an application always sets profiles.role to the new role.
- * If the admin happens to be testing with their own admin account (or
- * anyone else marked admin), this used to silently overwrite their
- * admin access. This guard skips the role change in that one case.
- */
-async function setRoleUnlessAdmin(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  userId: string,
-  newRole: "cook" | "rider"
-) {
-  const { data: existing, error: readError } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", userId)
-    .maybeSingle();
-
-  if (readError) throw new Error(`Couldn't check applicant's profile: ${readError.message}`);
-  if (existing?.role === "admin") return;
-
-  const { error } = await supabase
-    .from("profiles")
-    .upsert({ id: userId, role: newRole }, { onConflict: "id" });
-  if (error) throw new Error(`Couldn't update role: ${error.message}`);
-}
+import { approveApplication } from "@/lib/approvals";
 
 export async function approveCookApplication(applicationId: string, applicantUserId: string) {
   const supabase = await createClient();
@@ -36,13 +11,14 @@ export async function approveCookApplication(applicationId: string, applicantUse
   } = await supabase.auth.getUser();
   if (!user) throw new Error("Not signed in.");
 
-  const { error } = await supabase
-    .from("cook_applications")
-    .update({ status: "approved", reviewed_by: user.id, reviewed_at: new Date().toISOString() })
-    .eq("id", applicationId);
-  if (error) throw new Error(`Couldn't approve application: ${error.message}`);
-
-  await setRoleUnlessAdmin(supabase, applicantUserId, "cook");
+  // Role first, then status: see approvals.ts. Throws before revalidating.
+  await approveApplication(supabase, {
+    table: "cook_applications",
+    role: "cook",
+    applicationId,
+    applicantUserId,
+    reviewerId: user.id,
+  });
 
   revalidatePath("/");
   revalidatePath("/merchants");
@@ -72,13 +48,14 @@ export async function approveRiderApplication(applicationId: string, applicantUs
   } = await supabase.auth.getUser();
   if (!user) throw new Error("Not signed in.");
 
-  const { error } = await supabase
-    .from("rider_applications")
-    .update({ status: "approved", reviewed_by: user.id, reviewed_at: new Date().toISOString() })
-    .eq("id", applicationId);
-  if (error) throw new Error(`Couldn't approve application: ${error.message}`);
-
-  await setRoleUnlessAdmin(supabase, applicantUserId, "rider");
+  // Role first, then status: see approvals.ts. Throws before revalidating.
+  await approveApplication(supabase, {
+    table: "rider_applications",
+    role: "rider",
+    applicationId,
+    applicantUserId,
+    reviewerId: user.id,
+  });
 
   revalidatePath("/");
   revalidatePath("/riders");
