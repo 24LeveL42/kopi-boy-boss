@@ -2,16 +2,16 @@ import { LoginForm } from "@/components/LoginForm";
 import { NotAuthorized } from "@/components/NotAuthorized";
 import { AdminShell } from "@/components/AdminShell";
 import { MerchantEditForm } from "@/components/MerchantEditForm";
-import { requireAdmin } from "@/lib/require-admin";
+import { getViewer, hasAdminRole } from "@/lib/require-admin";
 import { kitchenLoadProblem, MERCHANT_EDIT_KITCHEN_COLUMNS } from "@/lib/kitchen-columns";
 import type { Profile } from "@/lib/types-auth";
 import type { Kitchen, MenuItem } from "@/lib/types-kitchen";
 
 export default async function EditMerchantPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const { supabase, user, profile } = await requireAdmin();
+  const { supabase, user } = await getViewer();
   if (!user) return <LoginForm />;
-  if (!profile || profile.role !== "admin") return <NotAuthorized />;
+  if (!(await hasAdminRole(supabase))) return <NotAuthorized />;
 
   const [{ data: merchant }, kitchenResult, { data: items }] = await Promise.all([
     supabase.from("profiles").select("*").eq("id", id).single<Profile>(),

@@ -1,15 +1,15 @@
 import { LoginForm } from "@/components/LoginForm";
 import { NotAuthorized } from "@/components/NotAuthorized";
 import { AdminShell } from "@/components/AdminShell";
-import { requireAdmin } from "@/lib/require-admin";
+import { getViewer, hasAdminRole } from "@/lib/require-admin";
 import { PartnerFinder, type PartnerListItem } from "@/components/PartnerFinder";
 import type { Profile } from "@/lib/types-auth";
 import { fetchEmailsById } from "@/lib/contacts";
 
 export default async function PartnersPage() {
-  const { supabase, user, profile: viewerProfile } = await requireAdmin();
+  const { supabase, user } = await getViewer();
   if (!user) return <LoginForm />;
-  if (!viewerProfile || viewerProfile.role !== "admin") return <NotAuthorized />;
+  if (!(await hasAdminRole(supabase))) return <NotAuthorized />;
 
   const { data: partners } = await supabase
     .from("profiles")

@@ -7,7 +7,7 @@ import { Card, EmptyState, LoadError } from "@/components/ops/EmptyState";
 import { StatusPill } from "@/components/ops/StatusPill";
 import { Age, PaymentCountdown } from "@/components/ops/Ticking";
 import { LiveRefresher } from "@/components/ops/LiveRefresher";
-import { requireAdmin } from "@/lib/require-admin";
+import { getViewer, hasAdminRole } from "@/lib/require-admin";
 import { loadOrderRows, renderTime } from "@/lib/ops-data";
 import {
   formatSgd,
@@ -39,9 +39,9 @@ export default async function LiveOrdersPage({
   const { q, stage: stageParam } = await searchParams;
   // ?stage= comes from the Overview pipeline; anything that isn't a live stage is ignored.
   const stage = LIVE_STAGES.find((s) => s === stageParam) as OrderStage | undefined;
-  const { supabase, user, profile } = await requireAdmin();
+  const { supabase, user } = await getViewer();
   if (!user) return <LoginForm />;
-  if (!profile || profile.role !== "admin") return <NotAuthorized />;
+  if (!(await hasAdminRole(supabase))) return <NotAuthorized />;
 
   const now = renderTime();
   const { rows: all, error } = await loadOrderRows(supabase, "live");

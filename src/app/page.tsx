@@ -1,28 +1,12 @@
-import { createClient } from "@/lib/supabase/server";
 import { LoginForm } from "@/components/LoginForm";
 import { NotAuthorized } from "@/components/NotAuthorized";
 import { Overview } from "@/components/ops/Overview";
-import type { Profile } from "@/lib/types-auth";
+import { getViewer, hasAdminRole } from "@/lib/require-admin";
 
 export default async function Home() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return <LoginForm />;
-  }
-
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("*")
-    .eq("id", user.id)
-    .single<Profile>();
-
-  if (!profile || profile.role !== "admin") {
-    return <NotAuthorized />;
-  }
+  const { supabase, user } = await getViewer();
+  if (!user) return <LoginForm />;
+  if (!(await hasAdminRole(supabase))) return <NotAuthorized />;
 
   return <Overview />;
 }

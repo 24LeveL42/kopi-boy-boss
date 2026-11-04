@@ -5,7 +5,7 @@ import { AdminShell } from "@/components/AdminShell";
 import { Cell, DataTable, type TableRow } from "@/components/ops/DataTable";
 import { Card, EmptyState, LoadError } from "@/components/ops/EmptyState";
 import { StatusPill } from "@/components/ops/StatusPill";
-import { requireAdmin } from "@/lib/require-admin";
+import { getViewer, hasAdminRole } from "@/lib/require-admin";
 import { loadOrderRows, PAST_ORDER_LIMIT } from "@/lib/ops-data";
 import { formatSgd, isLiveStage, pastOutcome, shortId, STAGE_TONE } from "@/lib/ops";
 import { formatSgTime } from "@/lib/complaints";
@@ -22,9 +22,9 @@ const COLUMNS = [
 
 export default async function PastOrdersPage({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
   const { q } = await searchParams;
-  const { supabase, user, profile } = await requireAdmin();
+  const { supabase, user } = await getViewer();
   if (!user) return <LoginForm />;
-  if (!profile || profile.role !== "admin") return <NotAuthorized />;
+  if (!(await hasAdminRole(supabase))) return <NotAuthorized />;
 
   const { rows: recent, error } = await loadOrderRows(supabase, "recent");
   const past = recent.filter((r) => !isLiveStage(r.stage));

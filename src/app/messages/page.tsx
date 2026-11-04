@@ -6,7 +6,7 @@ import { AdminMessageCard } from "@/components/AdminMessageCard";
 import { AdminMessagesRealtimeRefresher } from "@/components/AdminMessagesRealtimeRefresher";
 import { SearchableList } from "@/components/ops/DataTable";
 import { Card, EmptyState, LoadError } from "@/components/ops/EmptyState";
-import { hasAdminRole, requireAdmin } from "@/lib/require-admin";
+import { getViewer, hasAdminRole } from "@/lib/require-admin";
 import { formatSgTime } from "@/lib/complaints";
 import {
   ADMIN_MESSAGES_FETCH_LIMIT,
@@ -24,7 +24,7 @@ const SUBTITLE = "Messages riders and cooks send to HQ from the Partner app. Rep
 
 export default async function MessagesPage({ searchParams }: { searchParams: Promise<{ view?: string | string[] }> }) {
   const view = parseInboxView((await searchParams).view);
-  const { supabase, user } = await requireAdmin();
+  const { supabase, user } = await getViewer();
   if (!user) return <LoginForm />;
   if (!(await hasAdminRole(supabase))) return <NotAuthorized />;
 

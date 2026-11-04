@@ -10,12 +10,13 @@ import { ActivePill, StatusPill } from "@/components/ops/StatusPill";
 import { Age } from "@/components/ops/Ticking";
 import { loadPendingApplications, PendingRiderApplications } from "@/components/ops/PendingApplications";
 import { RiderMap, type RiderInfo } from "@/components/tracking/RiderMap";
-import { requireAdmin } from "@/lib/require-admin";
+import { getViewer, hasAdminRole } from "@/lib/require-admin";
 import { fetchEmailsById } from "@/lib/contacts";
 import { loadNames, renderTime } from "@/lib/ops-data";
 import { deliveredSince, sgDayStartIso, shortId, type DeliveryFacts } from "@/lib/ops";
 import { sortActiveThenBlocked } from "@/lib/admin-lists";
-import { deleteTestPartner, setPartnerActive } from "@/lib/actions";
+import { setPartnerActive } from "@/lib/actions";
+import { DeletePartnerButton } from "@/components/DeletePartnerButton";
 import type { Profile, RiderApplication } from "@/lib/types-auth";
 import { HIDE_AFTER_MS, isShown, timeAgo, type LiveLocation } from "@/lib/rider-tracking";
 
@@ -68,9 +69,9 @@ export default async function RidersPage({
 }) {
   const { q, view: viewParam, rider: riderParam } = await searchParams;
   const view: View = viewParam === "map" ? "map" : "table";
-  const { supabase, user, profile } = await requireAdmin();
+  const { supabase, user } = await getViewer();
   if (!user) return <LoginForm />;
-  if (!profile || profile.role !== "admin") return <NotAuthorized />;
+  if (!(await hasAdminRole(supabase))) return <NotAuthorized />;
 
   const now = renderTime();
   const [{ data: riderProfiles, error: riderError }, { data: approvedApps }, current, today, pending, live] =
@@ -180,14 +181,7 @@ export default async function RidersPage({
             pendingLabel="Saving…"
             background={r.is_active ? "var(--kb-danger)" : "var(--kb-green-deep)"}
           />
-          <ActionButton
-            action={deleteTestPartner.bind(null, r.id, "rider")}
-            label="Delete"
-            pendingLabel="Deleting…"
-            background="var(--oc-grey-bg)"
-            color="var(--kb-danger)"
-            confirmMessage={`Delete ${r.full_name || "this partner"}? This removes their profile, application, and kitchen/menu data.`}
-          />
+          <DeletePartnerButton partnerId={r.id} role="rider" confirmName={r.full_name?.trim() || email} />
         </div>,
       ],
     };

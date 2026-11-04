@@ -4,7 +4,7 @@ import { NotAuthorized } from "@/components/NotAuthorized";
 import { AdminShell } from "@/components/AdminShell";
 import { Card, EmptyState, LoadError } from "@/components/ops/EmptyState";
 import { RouteReplay } from "@/components/tracking/RouteReplay";
-import { requireAdmin } from "@/lib/require-admin";
+import { getViewer, hasAdminRole } from "@/lib/require-admin";
 import { loadJobDetails, loadNames, loadRoutePoints } from "@/lib/ops-data";
 import { currentDelivery, formatDuration, shortId, type DeliveryFacts } from "@/lib/ops";
 import { formatSgTimeWithSeconds, orderRoute } from "@/lib/rider-tracking";
@@ -29,9 +29,9 @@ function Time({ label, at, note }: { label: string; at: string | null | undefine
 
 export default async function RouteReplayPage({ params }: { params: Promise<{ orderId: string }> }) {
   const { orderId } = await params;
-  const { supabase, user, profile } = await requireAdmin();
+  const { supabase, user } = await getViewer();
   if (!user) return <LoginForm />;
-  if (!profile || profile.role !== "admin") return <NotAuthorized />;
+  if (!(await hasAdminRole(supabase))) return <NotAuthorized />;
 
   const title = `Route for order ${shortId(orderId)}`;
   const back = (

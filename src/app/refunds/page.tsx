@@ -3,7 +3,7 @@ import { NotAuthorized } from "@/components/NotAuthorized";
 import { AdminShell } from "@/components/AdminShell";
 import { DataTable } from "@/components/ops/DataTable";
 import { Card, EmptyState } from "@/components/ops/EmptyState";
-import { requireAdmin } from "@/lib/require-admin";
+import { getViewer, hasAdminRole } from "@/lib/require-admin";
 
 const COLUMNS = [
   { label: "Case" },
@@ -16,9 +16,9 @@ const COLUMNS = [
 ];
 
 export default async function RefundsPage() {
-  const { user, profile } = await requireAdmin();
+  const { supabase, user } = await getViewer();
   if (!user) return <LoginForm />;
-  if (!profile || profile.role !== "admin") return <NotAuthorized />;
+  if (!(await hasAdminRole(supabase))) return <NotAuthorized />;
 
   return (
     <AdminShell title="Refunds and disputes" subtitle="Refund and dispute cases between customers and merchants.">

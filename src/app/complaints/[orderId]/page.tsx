@@ -5,7 +5,7 @@ import { AdminShell } from "@/components/AdminShell";
 import { ComplaintThread } from "@/components/ComplaintThread";
 import { ComplaintsRealtimeRefresher } from "@/components/ComplaintsRealtimeRefresher";
 import { ThreadStatusBadge, ThreadStatusButton } from "@/components/ThreadStatus";
-import { hasAdminRole, requireAdmin } from "@/lib/require-admin";
+import { getViewer, hasAdminRole } from "@/lib/require-admin";
 import { COMPLAINT_THREAD_FETCH_LIMIT, formatSgTime, groupThreads, type ComplaintMessageRow } from "@/lib/complaints";
 
 type OrderRow = {
@@ -22,7 +22,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 export default async function ComplaintThreadPage({ params }: { params: Promise<{ orderId: string }> }) {
   const { orderId } = await params;
-  const { supabase, user } = await requireAdmin();
+  const { supabase, user } = await getViewer();
   if (!user) return <LoginForm />;
   if (!(await hasAdminRole(supabase))) return <NotAuthorized />;
 

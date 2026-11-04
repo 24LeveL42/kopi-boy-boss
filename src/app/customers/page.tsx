@@ -5,7 +5,7 @@ import { ContactLine } from "@/components/ContactLine";
 import { DataTable, type TableRow } from "@/components/ops/DataTable";
 import { Card, EmptyState, LoadError } from "@/components/ops/EmptyState";
 import { ActivePill } from "@/components/ops/StatusPill";
-import { requireAdmin } from "@/lib/require-admin";
+import { getViewer, hasAdminRole } from "@/lib/require-admin";
 import { fetchEmailsById } from "@/lib/contacts";
 import { ordersByCustomer } from "@/lib/ops";
 import { formatSgTime } from "@/lib/complaints";
@@ -27,9 +27,9 @@ const COLUMNS = [
 
 export default async function CustomersPage({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
   const { q } = await searchParams;
-  const { supabase, user, profile } = await requireAdmin();
+  const { supabase, user } = await getViewer();
   if (!user) return <LoginForm />;
-  if (!profile || profile.role !== "admin") return <NotAuthorized />;
+  if (!(await hasAdminRole(supabase))) return <NotAuthorized />;
 
   const [{ data: customerRows, error }, { data: orderRows, error: orderError }] = await Promise.all([
     supabase

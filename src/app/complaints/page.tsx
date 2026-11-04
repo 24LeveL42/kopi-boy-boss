@@ -4,7 +4,7 @@ import { NotAuthorized } from "@/components/NotAuthorized";
 import { AdminShell } from "@/components/AdminShell";
 import { ComplaintsRealtimeRefresher } from "@/components/ComplaintsRealtimeRefresher";
 import { ThreadStatusButton, ThreadStatusBadge } from "@/components/ThreadStatus";
-import { hasAdminRole, requireAdmin } from "@/lib/require-admin";
+import { getViewer, hasAdminRole } from "@/lib/require-admin";
 import {
   COMPLAINT_LIST_SCAN_LIMIT,
   formatSgTime,
@@ -28,7 +28,7 @@ type View = "active" | "resolved";
 
 export default async function ComplaintsPage({ searchParams }: { searchParams: Promise<{ view?: string | string[] }> }) {
   const view: View = (await searchParams).view === "resolved" ? "resolved" : "active";
-  const { supabase, user } = await requireAdmin();
+  const { supabase, user } = await getViewer();
   if (!user) return <LoginForm />;
   if (!(await hasAdminRole(supabase))) return <NotAuthorized />;
 

@@ -8,12 +8,13 @@ import { Cell, DataTable, type TableRow } from "@/components/ops/DataTable";
 import { Card, EmptyState, LoadError } from "@/components/ops/EmptyState";
 import { ActivePill, StatusPill } from "@/components/ops/StatusPill";
 import { loadPendingApplications, PendingCookApplications } from "@/components/ops/PendingApplications";
-import { requireAdmin } from "@/lib/require-admin";
+import { getViewer, hasAdminRole } from "@/lib/require-admin";
 import { fetchEmailsById } from "@/lib/contacts";
 import { selectIn } from "@/lib/ops-data";
 import { sortActiveThenBlocked } from "@/lib/admin-lists";
 import { MERCHANT_LIST_KITCHEN_COLUMNS } from "@/lib/kitchen-columns";
-import { deleteTestPartner, setPartnerActive } from "@/lib/actions";
+import { setPartnerActive } from "@/lib/actions";
+import { DeletePartnerButton } from "@/components/DeletePartnerButton";
 import type { CookApplication, Profile } from "@/lib/types-auth";
 import type { Kitchen } from "@/lib/types-kitchen";
 
@@ -34,9 +35,9 @@ const COLUMNS = [
 
 export default async function MerchantsPage({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
   const { q } = await searchParams;
-  const { supabase, user, profile } = await requireAdmin();
+  const { supabase, user } = await getViewer();
   if (!user) return <LoginForm />;
-  if (!profile || profile.role !== "admin") return <NotAuthorized />;
+  if (!(await hasAdminRole(supabase))) return <NotAuthorized />;
 
   const [{ data: kitchenRows, error: kitchenError }, pending] = await Promise.all([
     supabase.from("kitchens").select(MERCHANT_LIST_KITCHEN_COLUMNS).returns<KitchenRow[]>(),
@@ -93,14 +94,7 @@ export default async function MerchantsPage({ searchParams }: { searchParams: Pr
             pendingLabel="Saving…"
             background={active ? "var(--kb-danger)" : "var(--kb-green-deep)"}
           />
-          <ActionButton
-            action={deleteTestPartner.bind(null, k.id, "cook")}
-            label="Delete"
-            pendingLabel="Deleting…"
-            background="var(--oc-grey-bg)"
-            color="var(--kb-danger)"
-            confirmMessage={`Delete ${k.business_name}? This removes their profile, application, and kitchen/menu data.`}
-          />
+          <DeletePartnerButton partnerId={k.id} role="cook" confirmName={k.business_name || null} />
         </div>,
       ],
     };

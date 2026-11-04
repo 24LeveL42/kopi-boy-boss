@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { setPartnerActive, deleteTestPartner } from "@/lib/actions";
+import { setPartnerActive } from "@/lib/actions";
 import { ActionButton } from "@/components/ActionButton";
+import { DeletePartnerButton } from "@/components/DeletePartnerButton";
 import { ContactLine } from "@/components/ContactLine";
 import type { Profile } from "@/lib/types-auth";
 
@@ -108,13 +109,11 @@ function PartnerRow({ profile }: { profile: PartnerListItem }) {
           pendingLabel="Saving…"
           background={profile.is_active ? "var(--kb-danger)" : "var(--kb-green-deep)"}
         />
-        <ActionButton
-          action={deleteTestPartner.bind(null, profile.id, profile.role)}
-          label="Delete"
-          pendingLabel="Deleting…"
+        <DeletePartnerButton
+          partnerId={profile.id}
+          role={profile.role}
+          confirmName={profile.role === "cook" ? profile.business_name || null : profile.full_name?.trim() || profile.email}
           background="var(--kb-cream)"
-          color="var(--kb-danger)"
-          confirmMessage={`Delete ${profile.full_name || "this partner"}? This removes their profile, application, and kitchen/menu data.`}
         />
       </div>
     </div>

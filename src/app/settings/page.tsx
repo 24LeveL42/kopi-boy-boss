@@ -1,12 +1,12 @@
 import { LoginForm } from "@/components/LoginForm";
 import { NotAuthorized } from "@/components/NotAuthorized";
 import { AdminShell } from "@/components/AdminShell";
-import { requireAdmin } from "@/lib/require-admin";
+import { getViewer, hasAdminRole } from "@/lib/require-admin";
 
 export default async function SettingsPage() {
-  const { user, profile } = await requireAdmin();
+  const { supabase, user } = await getViewer();
   if (!user) return <LoginForm />;
-  if (!profile || profile.role !== "admin") return <NotAuthorized />;
+  if (!(await hasAdminRole(supabase))) return <NotAuthorized />;
 
   return (
     <AdminShell title="Platform Settings" subtitle="Global toggles and configuration for Kopi Boy.">

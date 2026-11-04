@@ -1,15 +1,26 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createClient } from "@/lib/supabase/server";
+import { assertAdmin } from "@/lib/require-admin";
 import { approveApplication } from "@/lib/approvals";
+import { deletePartnerWith, type DeleteReport } from "@/lib/delete-partner";
+import { setActiveWith } from "@/lib/partner-status";
+
+/*
+ * Every export here is a server action: reachable by a direct POST, not just
+ * from the UI. So each one starts with assertAdmin(), which throws unless the
+ * caller is signed in AND the database confirms they are an admin. Arguments
+ * are re-checked because a direct POST can send anything.
+ * server-actions.test.ts fails if an action skips assertAdmin().
+ */
+
+function requireOneOf<T extends string>(value: unknown, allowed: readonly T[], what: string): T {
+  if (typeof value !== "string" || !allowed.includes(value as T)) throw new Error(`Invalid ${what}.`);
+  return value as T;
+}
 
 export async function approveCookApplication(applicationId: string, applicantUserId: string) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) throw new Error("Not signed in.");
+  const { supabase, user } = await assertAdmin();
 
   // Role first, then status: see approvals.ts. Throws before revalidating.
   await approveApplication(supabase, {
@@ -25,11 +36,7 @@ export async function approveCookApplication(applicationId: string, applicantUse
 }
 
 export async function rejectCookApplication(applicationId: string) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) throw new Error("Not signed in.");
+  const { supabase, user } = await assertAdmin();
 
   const { error } = await supabase
     .from("cook_applications")
@@ -42,11 +49,7 @@ export async function rejectCookApplication(applicationId: string) {
 }
 
 export async function approveRiderApplication(applicationId: string, applicantUserId: string) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) throw new Error("Not signed in.");
+  const { supabase, user } = await assertAdmin();
 
   // Role first, then status: see approvals.ts. Throws before revalidating.
   await approveApplication(supabase, {
@@ -62,11 +65,7 @@ export async function approveRiderApplication(applicationId: string, applicantUs
 }
 
 export async function rejectRiderApplication(applicationId: string) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) throw new Error("Not signed in.");
+  const { supabase, user } = await assertAdmin();
 
   const { error } = await supabase
     .from("rider_applications")
@@ -79,61 +78,44 @@ export async function rejectRiderApplication(applicationId: string) {
 }
 
 export async function setPartnerActive(partnerId: string, isActive: boolean) {
-  const supabase = await createClient();
-  const { error } = await supabase.from("profiles").update({ is_active: isActive }).eq("id", partnerId);
-  if (error) throw new Error(`Couldn't update status: ${error.message}`);
-
-  revalidatePath("/partners");
-  revalidatePath("/merchants");
-  revalidatePath("/riders");
+  const { supabase } = await assertAdmin();
+  await setActiveWith(supabase, partnerId, isActive);
 }
 
 /**
- * Fully removes a test cook/rider: their profile row plus any
- * application, kitchen, and menu records tied to them, so they can go
- * through apply -> approve from scratch. For testing only — this does
- * not delete their actual Supabase Auth login, so they can sign back in
- * and will land back on the sign-up flow.
+ * Fully removes a test cook/rider (profile, application, kitchen, menu), so
+ * they can go through apply -> approve from scratch. Testing only: it does
+ * not delete their Supabase Auth login.
+ *
+ * Admins only (assertAdmin throws otherwise). Everything else is RETURNED as
+ * a report, never thrown: refusals (admin target, wrong role, wrong typed
+ * name) delete nothing, and a failed step stops the rest. See delete-partner.ts.
  */
-export async function deleteTestPartner(partnerId: string, role: "cook" | "rider") {
-  const supabase = await createClient();
+export async function deleteTestPartner(partnerId: string, role: "cook" | "rider", typedName: string): Promise<DeleteReport> {
+  const { supabase, user } = await assertAdmin();
 
-  if (role === "cook") {
-    const { error: e1 } = await supabase.from("menu_items").delete().eq("kitchen_id", partnerId);
-    if (e1) throw new Error(`Couldn't delete menu items: ${e1.message}`);
-    const { error: e2 } = await supabase.from("kitchens").delete().eq("id", partnerId);
-    if (e2) throw new Error(`Couldn't delete kitchen: ${e2.message}`);
-    const { error: e3 } = await supabase.from("cook_applications").delete().eq("user_id", partnerId);
-    if (e3) throw new Error(`Couldn't delete application: ${e3.message}`);
-  } else if (role === "rider") {
-    const { error } = await supabase.from("rider_applications").delete().eq("user_id", partnerId);
-    if (error) throw new Error(`Couldn't delete application: ${error.message}`);
+  const report = await deletePartnerWith(supabase, user.id, { partnerId, claimedRole: role, typedName });
+
+  if (report.deleted.length > 0) {
+    revalidatePath("/partners");
+    revalidatePath("/merchants");
+    revalidatePath("/riders");
   }
-
-  const { error: profileError } = await supabase.from("profiles").delete().eq("id", partnerId);
-  if (profileError) throw new Error(`Couldn't delete profile: ${profileError.message}`);
-
-  revalidatePath("/partners");
-  revalidatePath("/merchants");
-  revalidatePath("/riders");
+  return report;
 }
 
 /**
  * Marks a complaint thread settled ("resolved") or puts it back in the active
  * list ("open"). resolved_at/resolved_by are stamped by a DB trigger from the
- * server clock and auth.uid(); RLS (user_has_role('admin')) is what stops
- * non-admins, this only surfaces its error.
+ * server clock and auth.uid().
  */
 export async function setComplaintThreadStatus(orderId: string, status: "open" | "resolved") {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) throw new Error("Not signed in.");
+  const { supabase } = await assertAdmin();
+  const checked = requireOneOf(status, ["open", "resolved"] as const, "thread status");
 
   const { error } = await supabase
     .from("complaint_threads")
-    .upsert({ order_id: orderId, status }, { onConflict: "order_id" });
+    .upsert({ order_id: orderId, status: checked }, { onConflict: "order_id" });
   if (error) throw new Error(`Couldn't update thread: ${error.message}`);
 
   revalidatePath("/complaints");
