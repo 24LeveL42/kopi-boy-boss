@@ -12,10 +12,13 @@ import { requireAdmin } from "@/lib/require-admin";
 import { fetchEmailsById } from "@/lib/contacts";
 import { selectIn } from "@/lib/ops-data";
 import { sortActiveThenBlocked } from "@/lib/admin-lists";
+import { MERCHANT_LIST_KITCHEN_COLUMNS } from "@/lib/kitchen-columns";
 import { deleteTestPartner, setPartnerActive } from "@/lib/actions";
 import type { CookApplication, Profile } from "@/lib/types-auth";
 import type { Kitchen } from "@/lib/types-kitchen";
 
+/** Only the columns MERCHANT_LIST_KITCHEN_COLUMNS fetches. */
+type KitchenRow = Pick<Kitchen, "id" | "business_name" | "category" | "cuisine_type" | "is_live">;
 type AddressRow = { kitchen_id: string; business_address: string | null; postal_code: string | null };
 
 const COLUMNS = [
@@ -36,7 +39,7 @@ export default async function MerchantsPage({ searchParams }: { searchParams: Pr
   if (!profile || profile.role !== "admin") return <NotAuthorized />;
 
   const [{ data: kitchenRows, error: kitchenError }, pending] = await Promise.all([
-    supabase.from("kitchens").select("*").returns<Kitchen[]>(),
+    supabase.from("kitchens").select(MERCHANT_LIST_KITCHEN_COLUMNS).returns<KitchenRow[]>(),
     loadPendingApplications<CookApplication>(supabase, "cook_applications"),
   ]);
   const kitchens = kitchenRows ?? [];
@@ -51,7 +54,7 @@ export default async function MerchantsPage({ searchParams }: { searchParams: Pr
   const addressById = new Map(addresses.data.map((a) => [a.kitchen_id, a]));
 
   // A missing owner profile counts as blocked, as on the old Merchants list.
-  const isActive = (k: Kitchen) => ownerById.get(k.id)?.is_active ?? false;
+  const isActive = (k: KitchenRow) => ownerById.get(k.id)?.is_active ?? false;
   const rows: TableRow[] = sortActiveThenBlocked(kitchens, (k) => k.business_name, isActive).map((k) => {
     const owner = ownerById.get(k.id);
     const address = addressById.get(k.id);
