@@ -21,7 +21,7 @@ export default async function SubscriptionsPage() {
   return (
     <AdminShell
       title="Subscriptions"
-      subtitle="Flat monthly subscription for merchants at S$29.90 / month after a free trial — zero commission on orders."
+      subtitle="Flat monthly subscription for merchants at S$29.95/month after a free trial — zero commission on orders."
     >
       <Card className="overflow-hidden">
         <DataTable
