@@ -54,7 +54,7 @@ test("neither merchants page selects * on kitchens", () => {
 });
 
 test("the column lists are exact, with no * and no private column", () => {
-  assert.deepEqual(cols(MERCHANT_LIST_KITCHEN_COLUMNS), ["id", "business_name", "category", "cuisine_type", "is_live"]);
+  assert.deepEqual(cols(MERCHANT_LIST_KITCHEN_COLUMNS), ["id", "business_name", "category", "cuisine_type", "is_live", "region"]);
   assert.deepEqual(cols(MERCHANT_EDIT_KITCHEN_COLUMNS), [
     "id", "business_name", "category", "cuisine_type", "neighbourhood", "description", "hero_image", "is_live",
   ]);

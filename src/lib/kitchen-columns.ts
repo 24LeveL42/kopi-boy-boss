@@ -5,8 +5,11 @@
  * the columns; never add a private one here.
  */
 
-/** Merchants list: what the table renders. */
-export const MERCHANT_LIST_KITCHEN_COLUMNS = "id, business_name, category, cuisine_type, is_live";
+/**
+ * Merchants list: what the table renders. region is public and read-only:
+ * the database derives it from the cook's postal code; Boss never writes it.
+ */
+export const MERCHANT_LIST_KITCHEN_COLUMNS = "id, business_name, category, cuisine_type, is_live, region";
 
 /** Edit merchant: every Kitchen field MerchantEditForm reads. */
 export const MERCHANT_EDIT_KITCHEN_COLUMNS =

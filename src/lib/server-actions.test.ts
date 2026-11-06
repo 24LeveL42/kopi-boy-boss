@@ -44,7 +44,7 @@ test("server action files export nothing but async functions (no unguarded expor
   }
 });
 
-test("exactly the 10 known actions exist (a new one must be added here on purpose)", () => {
+test("exactly the 11 known actions exist (a new one must be added here on purpose)", () => {
   const names = ACTION_FILES.flatMap((f) => actions(f.text).map((a) => a.name)).sort();
   assert.deepEqual(names, [
     "approveCookApplication",
@@ -56,6 +56,7 @@ test("exactly the 10 known actions exist (a new one must be added here on purpos
     "setAdminMessageStatus",
     "setComplaintThreadStatus",
     "setPartnerActive",
+    "setRiderRegions",
     "unblockMessageSender",
   ]);
 });
@@ -68,7 +69,7 @@ test("the only route handler is the sign-in callback, and it stays admin-free", 
 test("requireAdmin is gone; every admin page gates on getViewer + hasAdminRole", () => {
   for (const f of FILES) assert.doesNotMatch(f.text, /\brequireAdmin\b/, `${f.rel} still uses requireAdmin`);
   const pages = FILES.filter((f) => /^app\/.*page\.tsx$/.test(f.rel) && f.rel !== "app/login/page.tsx");
-  assert.equal(pages.length, 18);
+  assert.equal(pages.length, 19);
   for (const p of pages) {
     assert.match(p.text, /await getViewer\(\);\s*\n\s*if \(!user\) return <LoginForm \/>;/, `${p.rel}: login gate`);
     assert.match(p.text, /if \(!\(await hasAdminRole\(supabase\)\)\) return <NotAuthorized \/>;/, `${p.rel}: admin gate`);

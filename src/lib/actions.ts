@@ -5,6 +5,7 @@ import { assertAdmin } from "@/lib/require-admin";
 import { approveApplication } from "@/lib/approvals";
 import { deletePartnerWith, type DeleteReport } from "@/lib/delete-partner";
 import { setActiveWith } from "@/lib/partner-status";
+import { setRiderRegionsWith, type SaveResult } from "@/lib/regions";
 
 /*
  * Every export here is a server action: reachable by a direct POST, not just
@@ -120,4 +121,22 @@ export async function setComplaintThreadStatus(orderId: string, status: "open" |
 
   revalidatePath("/complaints");
   revalidatePath(`/complaints/${orderId}`);
+}
+
+/**
+ * Replaces a rider's regions (at least one of north/south/east/west) through
+ * the admin_set_rider_regions RPC, which re-checks admin, rider and regions in
+ * the database. Problems come back as a message to show, never thrown, so the
+ * form can say exactly what went wrong.
+ */
+export async function setRiderRegions(riderId: string, regions: string[]): Promise<SaveResult> {
+  const { supabase } = await assertAdmin();
+
+  const result = await setRiderRegionsWith(supabase, riderId, regions);
+
+  if (result.ok) {
+    revalidatePath("/riders");
+    revalidatePath(`/riders/${riderId}/edit`);
+  }
+  return result;
 }

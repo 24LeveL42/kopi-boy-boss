@@ -17,6 +17,8 @@ import { deliveredSince, sgDayStartIso, shortId, type DeliveryFacts } from "@/li
 import { sortActiveThenBlocked } from "@/lib/admin-lists";
 import { setPartnerActive } from "@/lib/actions";
 import { DeletePartnerButton } from "@/components/DeletePartnerButton";
+import { RiderRegions } from "@/components/RegionTag";
+import { loadRiderRegions, REGION_LABEL } from "@/lib/regions";
 import type { Profile, RiderApplication } from "@/lib/types-auth";
 import { HIDE_AFTER_MS, isShown, timeAgo, type LiveLocation } from "@/lib/rider-tracking";
 
@@ -27,6 +29,7 @@ const DELIVERY_COLUMNS = "id, order_id, kitchen_id, rider_id, status, created_at
 const COLUMNS = [
   { label: "Rider" },
   { label: "Contact" },
+  { label: "Regions" },
   { label: "Status" },
   { label: "Current job" },
   { label: "Location" },
@@ -99,7 +102,7 @@ export default async function RidersPage({
   const jobs = current.data ?? [];
   const jobByRider = new Map(jobs.filter((d) => d.rider_id).map((d) => [d.rider_id!, d]));
   const deliveredToday = deliveredSince(today.data ?? [], sgDayStartIso(now));
-  const [emailById, names] = await Promise.all([
+  const [emailById, names, regions] = await Promise.all([
     fetchEmailsById(
       supabase,
       riders.map((r) => r.id),
@@ -108,6 +111,10 @@ export default async function RidersPage({
       supabase,
       jobs.map((d) => d.kitchen_id),
       [],
+    ),
+    loadRiderRegions(
+      supabase,
+      riders.map((r) => r.id),
     ),
   ]);
 
@@ -125,14 +132,24 @@ export default async function RidersPage({
       : "No application on file";
     const location = liveByRider.get(r.id);
     const sharing = location && isShown(location, now);
+    const riderRegions = regions.ok ? (regions.byRider.get(r.id) ?? []) : "error";
     return {
       id: r.id,
       muted: !r.is_active,
       rowHref: `/riders?view=map&rider=${r.id}`,
-      search: [r.full_name, r.phone, email, vehicle, job ? shortId(job.order_id) : null, merchant],
+      search: [
+        r.full_name,
+        r.phone,
+        email,
+        vehicle,
+        job ? shortId(job.order_id) : null,
+        merchant,
+        ...(riderRegions === "error" ? [] : riderRegions.map((c) => REGION_LABEL[c])),
+      ],
       cells: [
         <Cell key="n" main={r.full_name || "(no name on file)"} sub={vehicle} />,
         <ContactLine key="c" phone={r.phone} email={email} />,
+        <RiderRegions key="rg" regions={riderRegions} />,
         job ? (
           <StatusPill key="s" tone="purple">
             On a delivery
@@ -175,6 +192,13 @@ export default async function RidersPage({
         </span>,
         <ActivePill key="a" active={r.is_active} />,
         <div key="x" className="flex justify-end gap-2">
+          <Link
+            href={`/riders/${r.id}/edit`}
+            className="rounded-lg px-3 py-1.5 text-xs font-medium text-white"
+            style={{ background: "var(--oc-accent)" }}
+          >
+            Edit regions
+          </Link>
           <ActionButton
             action={setPartnerActive.bind(null, r.id, !r.is_active)}
             label={r.is_active ? "Block" : "Reinstate"}
@@ -202,6 +226,7 @@ export default async function RidersPage({
       {deliveryError && <LoadError what="deliveries" message={deliveryError.message} />}
       {pending.error && <LoadError what="rider applications" message={pending.error} />}
       {live.error && <LoadError what="rider locations" message={live.error.message} />}
+      {!regions.ok && <LoadError what="rider regions" message={regions.error} />}
       {view === "map" ? (
         <RiderMap initialLocations={live.data ?? []} riders={riderInfo} serverNow={now} initialRiderId={riderParam} />
       ) : (
@@ -213,7 +238,7 @@ export default async function RidersPage({
               rows={rows}
               noun="riders"
               initialQuery={q ?? ""}
-              searchPlaceholder="Search name, phone, email, vehicle or order…"
+              searchPlaceholder="Search name, phone, email, vehicle, region or order…"
               empty={<EmptyState>No approved riders yet.</EmptyState>}
             />
           </Card>
