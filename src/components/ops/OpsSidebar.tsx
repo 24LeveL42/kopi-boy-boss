@@ -8,6 +8,8 @@ import { badgeLabel } from "@/lib/admin-messages";
 import { countLiveOrders, countWhere } from "@/lib/ops-data";
 import { Logo } from "../Logo";
 import { SignOutButton } from "../SignOutButton";
+import { AlertSoundControl } from "../AlertSoundControl";
+import { ApplicationAlerts } from "../ApplicationAlerts";
 
 type CountKey = "liveOrders" | "pendingCooks" | "pendingRiders" | "openMessages";
 type Counts = Record<CountKey, number | null>;
@@ -191,6 +193,7 @@ export function OpsSidebar() {
         <Brand />
         <NavLinks pathname={pathname} counts={counts} />
       </aside>
+      <ApplicationAlerts />
     </>
   );
 }
@@ -238,6 +241,7 @@ function NavLinks({ pathname, counts }: { pathname: string; counts: Counts }) {
       </nav>
 
       <div className="mt-auto pt-6">
+        <AlertSoundControl />
         <SignOutButton />
       </div>
     </div>

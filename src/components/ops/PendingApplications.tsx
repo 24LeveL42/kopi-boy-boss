@@ -8,6 +8,7 @@ import type { CookApplication, Profile, RiderApplication } from "@/lib/types-aut
 import { fetchEmailsById } from "@/lib/contacts";
 import type { createClient } from "@/lib/supabase/server";
 import { formatSgTime } from "@/lib/complaints";
+import { applicationAnchor } from "@/lib/application-alerts";
 import { ActionButton } from "../ActionButton";
 import { ApplicantPhoto } from "../ApplicantPhoto";
 import { ContactLine } from "../ContactLine";
@@ -57,7 +58,7 @@ function Shell({ title, count, children }: { title: string; count: number; child
   );
 }
 
-const rowClass = "flex flex-col gap-3 border-b px-4 py-3 last:border-b-0 sm:flex-row sm:items-center sm:justify-between sm:gap-6";
+const rowClass = "scroll-mt-20 target:bg-[var(--oc-accent-soft)] flex flex-col gap-3 border-b px-4 py-3 last:border-b-0 sm:flex-row sm:items-center sm:justify-between sm:gap-6";
 const soft = { color: "var(--oc-text-soft)" };
 
 /** Cook sign-ups waiting for HQ, with the same Approve / Reject actions the old Command Centre had. */
@@ -69,7 +70,7 @@ export function PendingCookApplications({ loaded }: { loaded: Loaded<CookApplica
       {apps.map((app) => {
         const applicant = applicantById.get(app.user_id);
         return (
-          <li key={app.id} className={rowClass} style={{ borderColor: "var(--oc-line)" }}>
+          <li key={app.id} id={applicationAnchor(app.id)} className={rowClass} style={{ borderColor: "var(--oc-line)" }}>
             <div className="grid min-w-0 flex-1 grid-cols-1 gap-3 text-sm sm:grid-cols-3 sm:gap-6">
               <div className="min-w-0">
                 <p className="font-semibold">{app.business_name}</p>
@@ -125,7 +126,7 @@ export function PendingRiderApplications({ loaded }: { loaded: Loaded<RiderAppli
       {apps.map((app) => {
         const applicant = applicantById.get(app.user_id);
         return (
-          <li key={app.id} className={rowClass} style={{ borderColor: "var(--oc-line)" }}>
+          <li key={app.id} id={applicationAnchor(app.id)} className={rowClass} style={{ borderColor: "var(--oc-line)" }}>
             <div className="flex min-w-0 flex-1 items-center gap-4 text-sm">
               <ApplicantPhoto url={app.photo_url} userId={app.user_id} name={applicant?.full_name || "the applicant"} />
               <div className="min-w-0">
