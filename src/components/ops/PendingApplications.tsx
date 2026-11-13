@@ -10,6 +10,7 @@ import type { createClient } from "@/lib/supabase/server";
 import { formatSgTime } from "@/lib/complaints";
 import { applicationAnchor } from "@/lib/application-alerts";
 import { ActionButton } from "../ActionButton";
+import { ApprovalNotices, ApproveButton } from "../ApprovalNotices";
 import { ApplicantPhoto } from "../ApplicantPhoto";
 import { ContactLine } from "../ContactLine";
 import { Card } from "./EmptyState";
@@ -64,8 +65,11 @@ const soft = { color: "var(--oc-text-soft)" };
 /** Cook sign-ups waiting for HQ, with the same Approve / Reject actions the old Command Centre had. */
 export function PendingCookApplications({ loaded }: { loaded: Loaded<CookApplication> }) {
   const { apps, applicantById, emailById } = loaded;
-  if (apps.length === 0) return null;
+  // Always render ApprovalNotices (even with no rows left) so the notice for
+  // the last approval stays on screen.
+  if (apps.length === 0) return <ApprovalNotices>{null}</ApprovalNotices>;
   return (
+    <ApprovalNotices>
     <Shell title="Merchants waiting for approval" count={apps.length}>
       {apps.map((app) => {
         const applicant = applicantById.get(app.user_id);
@@ -96,12 +100,7 @@ export function PendingCookApplications({ loaded }: { loaded: Loaded<CookApplica
               </div>
             </div>
             <div className="flex shrink-0 gap-2">
-              <ActionButton
-                action={approveCookApplication.bind(null, app.id, app.user_id)}
-                label="Approve"
-                pendingLabel="Approving…"
-                background="var(--kb-green-deep)"
-              />
+              <ApproveButton action={approveCookApplication.bind(null, app.id, app.user_id)} who={app.business_name} />
               <ActionButton
                 action={rejectCookApplication.bind(null, app.id)}
                 label="Reject"
@@ -114,14 +113,16 @@ export function PendingCookApplications({ loaded }: { loaded: Loaded<CookApplica
         );
       })}
     </Shell>
+    </ApprovalNotices>
   );
 }
 
 /** Rider sign-ups waiting for HQ, photo first so identity can be checked before approving. */
 export function PendingRiderApplications({ loaded }: { loaded: Loaded<RiderApplication> }) {
   const { apps, applicantById, emailById } = loaded;
-  if (apps.length === 0) return null;
+  if (apps.length === 0) return <ApprovalNotices>{null}</ApprovalNotices>;
   return (
+    <ApprovalNotices>
     <Shell title="Riders waiting for approval" count={apps.length}>
       {apps.map((app) => {
         const applicant = applicantById.get(app.user_id);
@@ -140,11 +141,9 @@ export function PendingRiderApplications({ loaded }: { loaded: Loaded<RiderAppli
               </div>
             </div>
             <div className="flex shrink-0 gap-2">
-              <ActionButton
+              <ApproveButton
                 action={approveRiderApplication.bind(null, app.id, app.user_id)}
-                label="Approve"
-                pendingLabel="Approving…"
-                background="var(--kb-green-deep)"
+                who={applicant?.full_name || "Rider"}
               />
               <ActionButton
                 action={rejectRiderApplication.bind(null, app.id)}
@@ -158,5 +157,6 @@ export function PendingRiderApplications({ loaded }: { loaded: Loaded<RiderAppli
         );
       })}
     </Shell>
+    </ApprovalNotices>
   );
 }

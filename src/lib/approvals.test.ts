@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { approveApplication, setRoleUnlessAdmin } from "./approvals.ts";
 
 type Result = { data: unknown; error: { message: string } | null };
-type Call = { table: string; op: "select" | "update"; values?: Record<string, unknown>; eq?: [string, unknown] };
+type Call = { table: string; op: "select" | "update"; values?: Record<string, unknown>; eq?: [string, unknown]; neq?: [string, unknown]; returning?: string };
 
 /**
  * Minimal stand-in for the Supabase query builder. Records every query in
@@ -24,7 +24,8 @@ function fakeSupabase(respond: Record<string, Result>) {
         return respond[`${table}.${call.op}`] ?? { data: null, error: null };
       };
       const builder = {
-        select() {
+        select(columns?: string) {
+          if (call.op === "update") call.returning = columns;
           return builder;
         },
         update(values: Record<string, unknown>) {
@@ -34,6 +35,10 @@ function fakeSupabase(respond: Record<string, Result>) {
         },
         eq(column: string, value: unknown) {
           call.eq = [column, value];
+          return builder;
+        },
+        neq(column: string, value: unknown) {
+          call.neq = [column, value];
           return builder;
         },
         maybeSingle() {
@@ -146,4 +151,27 @@ test("an application update error is reported after the role was set", async () 
     "cook_applications.update": fail("denied"),
   });
   await assert.rejects(approveApplication(client, cookArgs), { message: "Couldn't approve application: denied" });
+});
+
+test("the status write only touches a row that isn't approved yet, and returns its id", async () => {
+  const { calls, client } = fakeSupabase({
+    "profiles.select": ok({ role: "customer" }),
+    "profiles.update": ok([{ id: "user-1" }]),
+    "cook_applications.update": ok([{ id: "app-1" }]),
+  });
+  const result = await approveApplication(client, cookArgs);
+  assert.deepEqual(result, { justApproved: true });
+  assert.deepEqual(calls[2].neq, ["status", "approved"]);
+  assert.equal(calls[2].returning, "id");
+});
+
+test("approving an already-approved application changes nothing: justApproved is false", async () => {
+  for (const data of [[], null]) {
+    const { client } = fakeSupabase({
+      "profiles.select": ok({ role: "cook" }),
+      "profiles.update": ok([{ id: "user-1" }]),
+      "cook_applications.update": ok(data),
+    });
+    assert.deepEqual(await approveApplication(client, cookArgs), { justApproved: false });
+  }
 });

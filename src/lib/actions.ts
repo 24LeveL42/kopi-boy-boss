@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { assertAdmin } from "@/lib/require-admin";
-import { approveApplication } from "@/lib/approvals";
+import { approveAndNotify, type ApprovalResult } from "@/lib/approvals";
 import { deletePartnerWith, type DeleteReport } from "@/lib/delete-partner";
 import { setActiveWith } from "@/lib/partner-status";
 import { setRiderRegionsWith, type SaveResult } from "@/lib/regions";
@@ -20,11 +20,13 @@ function requireOneOf<T extends string>(value: unknown, allowed: readonly T[], w
   return value as T;
 }
 
-export async function approveCookApplication(applicationId: string, applicantUserId: string) {
+export async function approveCookApplication(applicationId: string, applicantUserId: string): Promise<ApprovalResult> {
   const { supabase, user } = await assertAdmin();
 
   // Role first, then status: see approvals.ts. Throws before revalidating.
-  await approveApplication(supabase, {
+  // The welcome email goes out only if this call did the approving, and
+  // never throws: its outcome comes back as the notice for the admin.
+  const result = await approveAndNotify(supabase, {
     table: "cook_applications",
     role: "cook",
     applicationId,
@@ -34,6 +36,7 @@ export async function approveCookApplication(applicationId: string, applicantUse
 
   revalidatePath("/");
   revalidatePath("/merchants");
+  return result;
 }
 
 export async function rejectCookApplication(applicationId: string) {
@@ -49,11 +52,13 @@ export async function rejectCookApplication(applicationId: string) {
   revalidatePath("/merchants");
 }
 
-export async function approveRiderApplication(applicationId: string, applicantUserId: string) {
+export async function approveRiderApplication(applicationId: string, applicantUserId: string): Promise<ApprovalResult> {
   const { supabase, user } = await assertAdmin();
 
   // Role first, then status: see approvals.ts. Throws before revalidating.
-  await approveApplication(supabase, {
+  // The welcome email goes out only if this call did the approving, and
+  // never throws: its outcome comes back as the notice for the admin.
+  const result = await approveAndNotify(supabase, {
     table: "rider_applications",
     role: "rider",
     applicationId,
@@ -63,6 +68,7 @@ export async function approveRiderApplication(applicationId: string, applicantUs
 
   revalidatePath("/");
   revalidatePath("/riders");
+  return result;
 }
 
 export async function rejectRiderApplication(applicationId: string) {

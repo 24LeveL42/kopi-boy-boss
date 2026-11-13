@@ -78,6 +78,10 @@ export function fakeSupabase(respond: Record<string, Result | Result[]>) {
           call.filters.push([column, value]);
           return builder;
         },
+        neq(column: string, value: unknown) {
+          call.filters.push([`neq.${column}`, value]);
+          return builder;
+        },
         in(column: string, value: unknown) {
           call.filters.push([column, value]);
           return builder;
