@@ -10,6 +10,9 @@
  *    rider's full name (or email when there is no name). Compared after
  *    trimming, ignoring case. The expected name is read here, never taken
  *    from the browser.
+ *  - a cook with any subscription payment record is refused (billing
+ *    history is kept); their unpaid subscription row is removed through
+ *    admin_remove_unpaid_subscription just before the profile row.
  * Then the rows are deleted one table at a time, stopping at the first
  * failure. The result always says what was and wasn't deleted. It never
  * throws for an expected failure (Next hides thrown messages in production).
@@ -21,6 +24,12 @@ export type PartnerRole = "cook" | "rider";
 export interface DeleteStep {
   table: string;
   column: string;
+  /**
+   * Done through this admin RPC instead of a plain delete. Billing tables
+   * have no browser write grant; the SECURITY DEFINER function checks the
+   * admin role, refuses when payments exist and logs the removal.
+   */
+  rpc?: string;
 }
 
 export interface DeleteReport {
@@ -35,12 +44,18 @@ export interface DeleteReport {
   error?: string;
 }
 
-/** Order matters: children before the profile row they hang off. */
+/**
+ * Order matters: children before the profile row they hang off.
+ * merchant_subscriptions references profiles ON DELETE RESTRICT, so its row
+ * goes right before profiles (late on purpose: if an earlier step fails, the
+ * merchant still has its billing row). docs/supabase-subscriptions-step2.sql.
+ */
 export const DELETE_STEPS: Record<PartnerRole, DeleteStep[]> = {
   cook: [
     { table: "menu_items", column: "kitchen_id" },
     { table: "kitchens", column: "id" },
     { table: "cook_applications", column: "user_id" },
+    { table: "merchant_subscriptions", column: "merchant_id", rpc: "admin_remove_unpaid_subscription" },
     { table: "profiles", column: "id" },
   ],
   rider: [
@@ -126,18 +141,39 @@ export async function deletePartnerWith(
     return refused("The name you typed doesn't match.", role);
   }
 
-  // 4. Delete step by step; stop at the first failure.
+  // 4. A merchant with payment records keeps their billing history: refuse
+  //    before anything is deleted. A failed read refuses too (fail closed).
+  if (role === "cook") {
+    const { data, error } = await supabase.from("subscription_payments").select("id").eq("merchant_id", partnerId);
+    if (error) return refused(`Couldn't check the merchant's billing records: ${error.message}`, role);
+    const n = Array.isArray(data) ? data.length : 0;
+    if (n > 0) {
+      return refused(
+        `This merchant has ${n} payment record${n === 1 ? "" : "s"}, so their billing history must be kept and they can't be deleted.`,
+        role
+      );
+    }
+  }
+
+  // 5. Delete step by step; stop at the first failure.
   const steps = DELETE_STEPS[role];
   const deleted: string[] = [];
   for (let i = 0; i < steps.length; i++) {
-    const { table, column } = steps[i];
+    const { table, column, rpc } = steps[i];
     const rest = steps.slice(i).map((s) => s.table);
     let rows: unknown[] | null = null;
     let message: string | null = null;
     try {
-      const { data, error } = await supabase.from(table).delete().eq(column, partnerId).select("id");
-      if (error) message = error.message;
-      else rows = (data as unknown[] | null) ?? [];
+      if (rpc) {
+        // Returns true when it removed the row, false when there was none.
+        const { data, error } = await supabase.rpc(rpc, { p_merchant_id: partnerId, p_reason: "Boss: delete test partner" });
+        if (error) message = error.message;
+        else rows = data === true ? [partnerId] : [];
+      } else {
+        const { data, error } = await supabase.from(table).delete().eq(column, partnerId).select("id");
+        if (error) message = error.message;
+        else rows = (data as unknown[] | null) ?? [];
+      }
     } catch (e) {
       message = e instanceof Error ? e.message : String(e);
     }

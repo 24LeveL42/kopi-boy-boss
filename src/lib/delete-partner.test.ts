@@ -24,19 +24,34 @@ const cookOk = {
   "menu_items.delete": ok([{ id: "m1" }, { id: "m2" }]),
   "kitchens.delete": ok([{ id: COOK }]),
   "cook_applications.delete": ok([{ id: "a1" }]),
+  "subscription_payments.select": ok([]),
+  "rpc.admin_remove_unpaid_subscription": ok(true),
   "profiles.delete": ok([{ id: COOK }]),
 };
 
-test("cook happy path: 4 steps in order, then ok", async () => {
+test("cook happy path: 5 steps in order (subscription row via the admin rpc), then ok", async () => {
   const { client, deletes, calls } = setup(cookOk);
   const r = await deletePartnerWith(client, ADMIN, { partnerId: COOK, claimedRole: "cook", typedName: "Mei's Kopi Corner" });
   assert.equal(r.ok, true, r.error);
   assert.deepEqual(deletes(), ["menu_items", "kitchens", "cook_applications", "profiles"]);
-  assert.deepEqual(r.deleted, ["menu_items: 2 rows", "kitchens: 1 row", "cook_applications: 1 row", "profiles: 1 row"]);
+  assert.deepEqual(r.deleted, [
+    "menu_items: 2 rows",
+    "kitchens: 1 row",
+    "cook_applications: 1 row",
+    "merchant_subscriptions: 1 row",
+    "profiles: 1 row",
+  ]);
   assert.deepEqual(r.notDeleted, []);
   for (const c of calls.filter((c) => c.op === "delete")) {
     assert.deepEqual(c.filters[0][1], COOK, "every delete is scoped to the partner id");
   }
+  const order = calls.filter((c) => c.op === "delete" || c.kind === "rpc").map((c) => c.name);
+  assert.deepEqual(order, ["menu_items", "kitchens", "cook_applications", "admin_remove_unpaid_subscription", "profiles"]);
+  const rpc = calls.find((c) => c.kind === "rpc" && c.name === "admin_remove_unpaid_subscription");
+  assert.deepEqual(rpc?.args, { p_merchant_id: COOK, p_reason: "Boss: delete test partner" });
+  const pay = calls.find((c) => c.name === "subscription_payments");
+  assert.deepEqual(pay?.filters, [["merchant_id", COOK]]);
+  assert.ok(calls.indexOf(pay!) < calls.findIndex((c) => c.op === "delete"), "payments are checked before any delete");
 });
 
 test("rider happy path: 2 steps in order", async () => {
@@ -123,7 +138,7 @@ test("kitchens step fails: stops, profiles is never touched, report is exact", a
   assert.equal(r.failedStep, "kitchens");
   assert.match(r.error ?? "", /Stopped at kitchens: permission denied/);
   assert.deepEqual(r.deleted, ["menu_items: 2 rows"]);
-  assert.deepEqual(r.notDeleted, ["kitchens", "cook_applications", "profiles"]);
+  assert.deepEqual(r.notDeleted, ["kitchens", "cook_applications", "merchant_subscriptions", "profiles"]);
   assert.deepEqual(deletes(), ["menu_items", "kitchens"]);
 });
 
@@ -132,7 +147,7 @@ test("first step fails: nothing deleted, all steps reported as not deleted", asy
   const r = await deletePartnerWith(client, ADMIN, { partnerId: COOK, claimedRole: "cook", typedName: "Mei's Kopi Corner" });
   assert.equal(r.ok, false);
   assert.deepEqual(r.deleted, []);
-  assert.deepEqual(r.notDeleted, ["menu_items", "kitchens", "cook_applications", "profiles"]);
+  assert.deepEqual(r.notDeleted, ["menu_items", "kitchens", "cook_applications", "merchant_subscriptions", "profiles"]);
   assert.deepEqual(deletes(), ["menu_items"]);
 });
 
@@ -142,7 +157,7 @@ test("profile delete silently affects 0 rows: reported as a failure, not success
   assert.equal(r.ok, false);
   assert.equal(r.failedStep, "profiles");
   assert.deepEqual(r.notDeleted, ["profiles"]);
-  assert.equal(r.deleted.length, 3);
+  assert.equal(r.deleted.length, 4);
 });
 
 test("a step that throws is caught and reported, not re-thrown", async () => {
@@ -155,5 +170,59 @@ test("a step that throws is caught and reported, not re-thrown", async () => {
   const r = await deletePartnerWith(fake.client, ADMIN, { partnerId: COOK, claimedRole: "cook", typedName: "Mei's Kopi Corner" });
   assert.equal(r.ok, false);
   assert.equal(r.failedStep, "cook_applications");
-  assert.deepEqual(r.notDeleted, ["cook_applications", "profiles"]);
+  assert.deepEqual(r.notDeleted, ["cook_applications", "merchant_subscriptions", "profiles"]);
+});
+
+// --- Subscriptions step 2: the billing row and payment records ---
+
+test("cook with payment records: refused before anything is deleted, rpc never called", async () => {
+  const { client, deletes, calls } = setup({ ...cookOk, "subscription_payments.select": ok([{ id: "p1" }, { id: "p2" }]) });
+  const r = await deletePartnerWith(client, ADMIN, { partnerId: COOK, claimedRole: "cook", typedName: "Mei's Kopi Corner" });
+  assert.equal(r.ok, false);
+  assert.match(r.error ?? "", /2 payment records, so their billing history must be kept/);
+  assert.match(r.error ?? "", /Nothing was deleted/);
+  assert.deepEqual(r.deleted, []);
+  assert.deepEqual(deletes(), []);
+  assert.ok(!calls.some((c) => c.kind === "rpc" && c.name === "admin_remove_unpaid_subscription"));
+});
+
+test("payment check fails to read: refused (fail closed), nothing deleted", async () => {
+  const { client, deletes } = setup({ ...cookOk, "subscription_payments.select": fail("permission denied") });
+  const r = await deletePartnerWith(client, ADMIN, { partnerId: COOK, claimedRole: "cook", typedName: "Mei's Kopi Corner" });
+  assert.equal(r.ok, false);
+  assert.match(r.error ?? "", /Couldn't check the merchant's billing records: permission denied/);
+  assert.match(r.error ?? "", /Nothing was deleted/);
+  assert.deepEqual(deletes(), []);
+});
+
+test("subscription rpc refuses (payment recorded meanwhile): stops before profiles, report is exact", async () => {
+  const { client, deletes } = setup({
+    ...cookOk,
+    "rpc.admin_remove_unpaid_subscription": fail("billing_has_payments: this merchant has 1 payment record(s)"),
+  });
+  const r = await deletePartnerWith(client, ADMIN, { partnerId: COOK, claimedRole: "cook", typedName: "Mei's Kopi Corner" });
+  assert.equal(r.ok, false);
+  assert.equal(r.failedStep, "merchant_subscriptions");
+  assert.match(r.error ?? "", /Stopped at merchant_subscriptions: billing_has_payments/);
+  assert.deepEqual(r.notDeleted, ["merchant_subscriptions", "profiles"]);
+  assert.deepEqual(deletes(), ["menu_items", "kitchens", "cook_applications"], "profiles is never touched");
+});
+
+test("cook with no subscription row (rpc returns false): 0 rows, then the profile goes", async () => {
+  const { client, deletes } = setup({ ...cookOk, "rpc.admin_remove_unpaid_subscription": ok(false) });
+  const r = await deletePartnerWith(client, ADMIN, { partnerId: COOK, claimedRole: "cook", typedName: "Mei's Kopi Corner" });
+  assert.equal(r.ok, true, r.error);
+  assert.ok(r.deleted.includes("merchant_subscriptions: 0 rows"));
+  assert.deepEqual(deletes(), ["menu_items", "kitchens", "cook_applications", "profiles"]);
+});
+
+test("rider delete: no payment check and no subscription rpc", async () => {
+  const { client, calls } = setup({
+    "profiles.select": riderProfile,
+    "rider_applications.delete": ok([{ id: "r1" }]),
+    "profiles.delete": ok([{ id: RIDER }]),
+  });
+  const r = await deletePartnerWith(client, ADMIN, { partnerId: RIDER, claimedRole: "rider", typedName: "Ravi Kumar" });
+  assert.equal(r.ok, true, r.error);
+  assert.ok(!calls.some((c) => c.name === "subscription_payments" || c.name === "admin_remove_unpaid_subscription"));
 });
