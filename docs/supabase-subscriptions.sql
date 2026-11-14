@@ -7,7 +7,7 @@
 -- no kitchens, profiles or cook_applications change, no trigger on any
 -- existing table, and every switch is OFF.
 --
--- NOT in this file (later steps): the founding-100 trigger on
+-- NOT in this file (later steps): the founding merchants trigger on
 -- cook_applications, the admin_* and get_my_subscription() functions, the
 -- daily job, the kitchens.is_blocked rewrite and the email outbox functions.
 --
@@ -15,8 +15,11 @@
 --   * Price S$29.95 (price_cents 2995) and the payee KOPIE BOY,
 --     UEN 53535194A, live in billing_settings: apps read them, never
 --     hard-code them. No GST wording anywhere.
---   * Founding merchants: first due date 22 Mar 2027 (founding_free_until),
---     grace 23–25 Mar (grace_days 3), overdue from 26 Mar.
+--   * Founding merchants: NO cap. Every merchant whose application was
+--     submitted before launch_date (22 Dec 2026, Singapore date) is a
+--     founding merchant, however many there are. First due date 22 Mar 2027
+--     (founding_free_until), grace 23–25 Mar (grace_days 3), overdue from
+--     26 Mar.
 --   * A late payment counts from the old due date: due dates are always
 --     billing_anchor + months_paid months, so paying late never moves the
 --     anchor, and one payment may cover several months (1–12).
@@ -24,7 +27,7 @@
 --     merchant_subscriptions ON DELETE RESTRICT, which references profiles
 --     ON DELETE RESTRICT. A merchant with no payments can be deleted once
 --     its subscription row is removed first (the delete flow, later step).
---   * Test accounts are excluded from the founding 100 via exempt = true
+--   * Test accounts are excluded from the founding merchants via exempt = true
 --     (set by the founding backfill, later step).
 --
 -- WHO CAN DO WHAT
@@ -177,7 +180,6 @@ create table if not exists public.billing_settings (
   restrictions_enabled boolean not null default false,
   launch_date date not null default '2026-12-22',
   founding_free_until date not null default '2027-03-22',  -- = founding first due date
-  founding_limit int not null default 100 check (founding_limit between 0 and 100),
   grace_days int not null default 3 check (grace_days between 0 and 14),
   price_cents int not null default 2995 check (price_cents > 0),
   payee_name text not null default 'KOPIE BOY' check (pg_catalog.btrim(payee_name) <> ''),
@@ -196,7 +198,11 @@ create table if not exists public.billing_settings (
 create table if not exists public.merchant_subscriptions (
   merchant_id uuid primary key references public.profiles(id) on delete restrict,
   approved_at timestamptz not null,
-  founding_number int check (founding_number between 1 and 100),
+  -- When the merchant applied; the founding rule compares
+  -- sgt_date(applied_at) < launch_date. Nullable for now (the backfill and
+  -- the trigger fill it in a later step).
+  applied_at timestamptz,
+  founding_number int check (founding_number >= 1),
   is_founding boolean generated always as (founding_number is not null) stored,
   billing_anchor date not null,
   months_paid int not null default 0 check (months_paid >= 0),
@@ -211,6 +217,17 @@ create table if not exists public.merchant_subscriptions (
 create unique index if not exists merchant_subscriptions_founding_number_key
   on public.merchant_subscriptions (founding_number)
   where founding_number is not null;
+
+comment on column public.merchant_subscriptions.applied_at is
+  'When the merchant applied; the founding rule compares sgt_date(applied_at) < launch_date';
+
+-- FOUNDING MERCHANTS: the trigger rules (later step, not in this file)
+--   * Eligibility: sgt_date(application created_at) < launch_date. No cap:
+--     every application submitted before launch qualifies.
+--   * The founding number is assigned at approval (next number = max + 1),
+--     under pg_advisory_xact_lock so two simultaneous approvals can never
+--     get the same number. The unique index above is the backstop.
+--   * Exempt (test) accounts never get a founding number.
 
 
 -- ----------------------------------------------------------------------------
@@ -527,4 +544,23 @@ commit;
 -- drop function if exists public.billing_write_guard(), public.billing_touch_updated_at(), public.sgt_today(), public.sgt_date(timestamptz);
 -- commit;
 -- UNDO-END
+-- ============================================================================
+
+
+-- ============================================================================
+-- LIVE DATABASE: ALTERS FOR TABLES ALREADY CREATED BY AN EARLIER VERSION OF
+-- THIS FILE. "create table if not exists" does not change an existing table,
+-- so run this once on a database where the tables already exist. Each
+-- statement is safe to repeat. The billing lock trigger fires on row writes
+-- and truncate only, so these ALTERs are not blocked by it.
+-- Remove the leading "-- " and run as one block.
+-- ALTER-BEGIN
+-- begin;
+-- alter table public.billing_settings drop column if exists founding_limit;
+-- alter table public.merchant_subscriptions drop constraint if exists merchant_subscriptions_founding_number_check;
+-- alter table public.merchant_subscriptions add constraint merchant_subscriptions_founding_number_check check (founding_number >= 1);
+-- alter table public.merchant_subscriptions add column if not exists applied_at timestamptz;
+-- comment on column public.merchant_subscriptions.applied_at is 'When the merchant applied; the founding rule compares sgt_date(applied_at) < launch_date';
+-- commit;
+-- ALTER-END
 -- ============================================================================
