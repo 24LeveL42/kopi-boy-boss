@@ -216,7 +216,7 @@ describe("subscriptions SQL — settings, grants, RLS and the lock", () => {
     const settings = await rows<Record<string, unknown>>(
       db,
       `select reminders_inapp_enabled, reminders_email_enabled, restrictions_enabled,
-              launch_date::text, founding_free_until::text, founding_limit, grace_days,
+              launch_date::text, founding_free_until::text, grace_days,
               price_cents, payee_name, payee_uen
        from public.billing_settings`
     );
@@ -227,12 +227,23 @@ describe("subscriptions SQL — settings, grants, RLS and the lock", () => {
         restrictions_enabled: false,
         launch_date: "2026-12-22",
         founding_free_until: "2027-03-22",
-        founding_limit: 100,
         grace_days: 3,
         price_cents: 2995,
         payee_name: "KOPIE BOY",
         payee_uen: "53535194A",
       },
+    ]);
+    // No founding cap: the founding_limit column is gone, and applied_at
+    // (the date the founding rule compares) exists on merchant_subscriptions.
+    const cols = await rows<{ table_name: string; column_name: string; data_type: string; is_nullable: string }>(
+      db,
+      `select table_name, column_name, data_type, is_nullable from information_schema.columns
+       where table_schema = 'public'
+         and ((table_name = 'billing_settings' and column_name = 'founding_limit')
+           or (table_name = 'merchant_subscriptions' and column_name = 'applied_at'))`
+    );
+    assert.deepEqual(cols, [
+      { table_name: "merchant_subscriptions", column_name: "applied_at", data_type: "timestamp with time zone", is_nullable: "YES" },
     ]);
   });
 
@@ -447,11 +458,13 @@ describe("subscriptions SQL — settings, grants, RLS and the lock", () => {
     assert.equal(dryRuns, "");
   });
 
-  it("founding numbers are unique and 1–100 only", async () => {
+  it("founding numbers are unique and at least 1, with no upper cap", async () => {
     const dup = await owner(db, true, () => attempt(db, "update public.merchant_subscriptions set founding_number = 1 where merchant_id = $1", [COOK_B]));
     assert.match(dup, /duplicate key|unique/);
     const over = await owner(db, true, () => attempt(db, "update public.merchant_subscriptions set founding_number = 101 where merchant_id = $1", [COOK_B]));
-    assert.match(over, /check constraint/);
+    assert.equal(over, "");
+    const zero = await owner(db, true, () => attempt(db, "update public.merchant_subscriptions set founding_number = 0 where merchant_id = $1", [COOK_B]));
+    assert.match(zero, /check constraint/);
     const [b] = await rows<{ is_founding: boolean }>(db, "select is_founding from public.merchant_subscriptions where merchant_id = $1", [COOK_B]);
     assert.equal(b.is_founding, false);
     const [a] = await rows<{ is_founding: boolean }>(db, "select is_founding from public.merchant_subscriptions where merchant_id = $1", [COOK_A]);
