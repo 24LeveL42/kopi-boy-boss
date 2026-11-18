@@ -69,7 +69,7 @@ test("the only route handler is the sign-in callback, and it stays admin-free", 
 test("requireAdmin is gone; every admin page gates on getViewer + hasAdminRole", () => {
   for (const f of FILES) assert.doesNotMatch(f.text, /\brequireAdmin\b/, `${f.rel} still uses requireAdmin`);
   const pages = FILES.filter((f) => /^app\/.*page\.tsx$/.test(f.rel) && f.rel !== "app/login/page.tsx");
-  assert.equal(pages.length, 19);
+  assert.equal(pages.length, 20);
   for (const p of pages) {
     assert.match(p.text, /await getViewer\(\);\s*\n\s*if \(!user\) return <LoginForm \/>;/, `${p.rel}: login gate`);
     assert.match(p.text, /if \(!\(await hasAdminRole\(supabase\)\)\) return <NotAuthorized \/>;/, `${p.rel}: admin gate`);

@@ -23,6 +23,7 @@ const MAIN_LINKS: { label: string; href: string; count?: CountKey; tone?: "neutr
   { label: "Riders", href: "/riders", count: "pendingRiders", tone: "amber" },
   { label: "Customers", href: "/customers" },
   { label: "Subscriptions", href: "/subscriptions" },
+  { label: "Registration analytics", href: "/registration-analytics" },
   { label: "Messages", href: "/messages", count: "openMessages", tone: "red" },
   { label: "Activity log", href: "/activity" },
 ];
