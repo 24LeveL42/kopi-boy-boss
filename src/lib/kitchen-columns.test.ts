@@ -2,8 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
+  KITCHEN_AUDIT_COLUMNS,
   kitchenLoadProblem,
   MERCHANT_EDIT_KITCHEN_COLUMNS,
+  MERCHANT_EDIT_MENU_COLUMNS,
   MERCHANT_LIST_KITCHEN_COLUMNS,
 } from "./kitchen-columns.ts";
 
@@ -12,7 +14,7 @@ const LIST_PAGE = src("../app/merchants/page.tsx");
 const EDIT_PAGE = src("../app/merchants/[id]/edit/page.tsx");
 const EDIT_FORM = src("../components/MerchantEditForm.tsx");
 
-const PRIVATE = ["paynow_type", "paynow_value", "latitude", "longitude", "acknowledged_terms_at"];
+const PRIVATE = ["paynow_type", "paynow_value", "latitude", "longitude", "acknowledged_terms_at", "opening_hours"];
 const cols = (list: string) => list.split(",").map((c) => c.trim());
 
 // --- The edit page never shows the form for a kitchen that didn't load ---
@@ -45,10 +47,11 @@ test("edit page returns the error screen before it can reach MerchantEditForm", 
 
 // --- No select("*") on kitchens, and no private columns ---
 
-test("neither merchants page selects * on kitchens", () => {
+test("neither merchants page selects * on kitchens or menu_items", () => {
   for (const page of [LIST_PAGE, EDIT_PAGE]) {
-    assert.doesNotMatch(page, /from\("kitchens"\)\s*\.select\(\s*(["'`]\s*\*\s*["'`])?\s*\)/);
+    assert.doesNotMatch(page, /from\("(kitchens|menu_items)"\)\s*\.select\(\s*(["'`]\s*\*\s*["'`])?\s*\)/);
   }
+  assert.match(EDIT_PAGE, /from\("menu_items"\)\.select\(MERCHANT_EDIT_MENU_COLUMNS\)/);
   assert.match(LIST_PAGE, /from\("kitchens"\)\.select\(MERCHANT_LIST_KITCHEN_COLUMNS\)/);
   assert.match(EDIT_PAGE, /from\("kitchens"\)\.select\(MERCHANT_EDIT_KITCHEN_COLUMNS\)/);
 });
@@ -56,8 +59,12 @@ test("neither merchants page selects * on kitchens", () => {
 test("the column lists are exact, with no * and no private column", () => {
   assert.deepEqual(cols(MERCHANT_LIST_KITCHEN_COLUMNS), ["id", "business_name", "category", "cuisine_type", "is_live", "region"]);
   assert.deepEqual(cols(MERCHANT_EDIT_KITCHEN_COLUMNS), [
-    "id", "business_name", "category", "cuisine_type", "neighbourhood", "description", "hero_image", "is_live",
+    "id", "business_name", "category", "cuisine_type", "is_halal", "description", "hero_image", "is_live", "updated_at",
   ]);
+  assert.deepEqual(cols(MERCHANT_EDIT_MENU_COLUMNS), [
+    "id", "kitchen_id", "name", "price", "photo_url", "is_hidden", "updated_at", "created_at",
+  ]);
+  assert.ok(!KITCHEN_AUDIT_COLUMNS.includes("*"));
   for (const list of [MERCHANT_LIST_KITCHEN_COLUMNS, MERCHANT_EDIT_KITCHEN_COLUMNS]) {
     assert.ok(!list.includes("*"));
     for (const c of PRIVATE) assert.ok(!cols(list).includes(c), `${c} must not be selected`);
@@ -65,7 +72,7 @@ test("the column lists are exact, with no * and no private column", () => {
 });
 
 test("the edit query fetches every kitchen field MerchantEditForm reads", () => {
-  const used = [...EDIT_FORM.matchAll(/existingKitchen\?\.(\w+)/g)].map((m) => m[1]);
+  const used = [...EDIT_FORM.matchAll(/existingKitchen\??\.(\w+)/g)].map((m) => m[1]);
   assert.ok(used.length > 0);
   for (const field of used) assert.ok(cols(MERCHANT_EDIT_KITCHEN_COLUMNS).includes(field), `missing ${field}`);
 });

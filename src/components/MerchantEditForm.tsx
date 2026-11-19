@@ -1,152 +1,107 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
+import { saveKitchenProfile } from "@/lib/actions";
+import { CUISINE_TYPES, DESCRIPTION_MAX, MERCHANT_CATEGORIES, type KitchenProfile } from "@/lib/kitchen-admin";
+import type { Kitchen } from "@/lib/types-kitchen";
+import { KitchenPhotoField } from "./KitchenPhotoField";
 import { Spinner } from "./Spinner";
-import type { Kitchen, MenuItem, MerchantCategory, CuisineType } from "@/lib/types-kitchen";
 
-const CATEGORIES: { id: MerchantCategory; label: string }[] = [
-  { id: "home-cook", label: "Home Cook" },
-  { id: "hawker", label: "Hawker" },
-  { id: "bakery", label: "Bakery" },
-  { id: "bulk-orders", label: "Bulk Orders" },
-  { id: "drinks", label: "Desserts & Drinks" },
-];
+/**
+ * HQ edits a kitchen's public profile. Saves through the saveKitchenProfile
+ * server action (UPDATE only, explicit columns, stale-edit check); this
+ * component never touches the database itself, except uploading a photo
+ * file to storage. No PayNow, opening hours or anything the database fills in.
+ */
+export function MerchantEditForm({ existingKitchen }: { existingKitchen: Kitchen }) {
+  const kitchenId = existingKitchen.id;
+  const [businessName, setBusinessName] = useState(existingKitchen.business_name ?? "");
+  const [category, setCategory] = useState(existingKitchen.category);
+  const [cuisineType, setCuisineType] = useState(existingKitchen.cuisine_type);
+  const [isHalal, setIsHalal] = useState(existingKitchen.is_halal === true);
+  const [description, setDescription] = useState(existingKitchen.description ?? "");
+  const [heroImage, setHeroImage] = useState(existingKitchen.hero_image ?? "");
+  const [isLive, setIsLive] = useState(existingKitchen.is_live === true);
+  const [loadedUpdatedAt, setLoadedUpdatedAt] = useState(existingKitchen.updated_at);
 
-const CUISINES: { id: CuisineType; label: string }[] = [
-  { id: "chinese", label: "Chinese" },
-  { id: "halal", label: "Halal" },
-  { id: "indian", label: "Indian" },
-  { id: "western", label: "Western" },
-];
-
-interface DraftItem {
-  key: string;
-  name: string;
-  price: string;
-  photo_url: string;
-}
-
-function emptyItem(): DraftItem {
-  return { key: crypto.randomUUID(), name: "", price: "", photo_url: "" };
-}
-
-export function MerchantEditForm({
-  merchantId,
-  merchantName,
-  existingKitchen,
-  existingItems,
-}: {
-  merchantId: string;
-  merchantName: string;
-  existingKitchen: Kitchen | null;
-  existingItems: MenuItem[];
-}) {
-  const router = useRouter();
-  const supabase = createClient();
-
-  const [businessName, setBusinessName] = useState(existingKitchen?.business_name ?? merchantName);
-  const [category, setCategory] = useState<MerchantCategory>(existingKitchen?.category ?? "home-cook");
-  const [cuisineType, setCuisineType] = useState<CuisineType>(existingKitchen?.cuisine_type ?? "chinese");
-  const [neighbourhood, setNeighbourhood] = useState(existingKitchen?.neighbourhood ?? "");
-  const [description, setDescription] = useState(existingKitchen?.description ?? "");
-  const [heroImage, setHeroImage] = useState(existingKitchen?.hero_image ?? "");
-  const [isLive, setIsLive] = useState(existingKitchen?.is_live ?? true);
-  const [items, setItems] = useState<DraftItem[]>(
-    existingItems.length > 0
-      ? existingItems.map((i) => ({ key: i.id, name: i.name, price: String(i.price), photo_url: i.photo_url ?? "" }))
-      : [emptyItem()]
-  );
   const [saving, startSaving] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [stale, setStale] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
-  function updateItem(key: string, patch: Partial<DraftItem>) {
-    setItems((prev) => prev.map((it) => (it.key === key ? { ...it, ...patch } : it)));
-  }
-  function addItem() {
-    setItems((prev) => [...prev, emptyItem()]);
-  }
-  function removeItem(key: string) {
-    setItems((prev) => (prev.length > 1 ? prev.filter((it) => it.key !== key) : prev));
+  // Values the database rejects (an old category, say) would otherwise show as a blank select.
+  const categoryKnown = MERCHANT_CATEGORIES.some((c) => c.id === category);
+  const cuisineKnown = CUISINE_TYPES.some((c) => c.id === cuisineType);
+
+  function edited<T>(set: (v: T) => void) {
+    return (v: T) => {
+      setNotice(null);
+      set(v);
+    };
   }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (saving) return;
     setError(null);
-
-    const validItems = items
-      .map((it) => ({ ...it, name: it.name.trim(), price: parseFloat(it.price) }))
-      .filter((it) => it.name.length > 0 && !Number.isNaN(it.price) && it.price > 0);
-
-    if (!businessName.trim() || !neighbourhood.trim()) {
-      setError("Business name and neighbourhood are required.");
+    setNotice(null);
+    if (!businessName.trim()) {
+      setError("Business name is required.");
       return;
     }
-
-    // Stays pending through the redirect, so the button can't be re-tapped mid-save.
+    const profile: KitchenProfile = {
+      business_name: businessName,
+      category,
+      cuisine_type: cuisineType,
+      is_halal: isHalal,
+      description: description || null,
+      hero_image: heroImage || null,
+      is_live: isLive,
+    };
     startSaving(async () => {
       try {
-        const { error: kitchenError } = await supabase.from("kitchens").upsert({
-          id: merchantId,
-          business_name: businessName.trim(),
-          category,
-          cuisine_type: cuisineType,
-          neighbourhood: neighbourhood.trim(),
-          description: description.trim() || null,
-          hero_image: heroImage.trim() || null,
-          is_live: isLive,
-        });
-        if (kitchenError) {
-          setError(kitchenError.message);
-          return;
+        const result = await saveKitchenProfile(kitchenId, loadedUpdatedAt, profile);
+        if (result.ok) {
+          setLoadedUpdatedAt(result.updatedAt);
+          setStale(false);
+          setNotice("Saved. The change is recorded in the change history.");
+        } else {
+          setError(result.message);
+          setStale(result.stale === true);
         }
-
-        await supabase.from("menu_items").delete().eq("kitchen_id", merchantId);
-        if (validItems.length > 0) {
-          const { error: itemsError } = await supabase.from("menu_items").insert(
-            validItems.map((it) => ({
-              kitchen_id: merchantId,
-              name: it.name,
-              price: it.price,
-              photo_url: it.photo_url.trim() || null,
-            }))
-          );
-          if (itemsError) {
-            setError(itemsError.message);
-            return;
-          }
-        }
-
-        router.push("/merchants");
-        router.refresh();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Something went wrong — please try again.");
+      } catch {
+        // Only assertAdmin() throws (signed out, or not an admin).
+        setError("Not saved: your admin session couldn't be confirmed. Please sign in again and retry.");
       }
     });
   }
 
+  const inputStyle = { borderColor: "var(--oc-line)", background: "var(--oc-card)", color: "var(--oc-text)" };
+
   return (
-    <form onSubmit={handleSubmit} className="mt-5 space-y-5">
-      <section className="space-y-3 rounded-2xl bg-white p-4" style={{ color: "var(--kb-ink)" }}>
-        <Field label="Business name">
-          <input
-            value={businessName}
-            onChange={(e) => setBusinessName(e.target.value)}
-            required
-            className="w-full rounded-xl border px-3 py-2.5 text-sm"
-            style={{ borderColor: "#E5E7EB" }}
-          />
-        </Field>
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <Field label="Business name">
+        <input
+          value={businessName}
+          onChange={(e) => edited(setBusinessName)(e.target.value)}
+          required
+          maxLength={80}
+          disabled={saving}
+          className="w-full rounded-lg border px-3 py-2 text-sm"
+          style={inputStyle}
+        />
+      </Field>
+      <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Category">
           <select
             value={category}
-            onChange={(e) => setCategory(e.target.value as MerchantCategory)}
-            className="w-full rounded-xl border px-3 py-2.5 text-sm"
-            style={{ borderColor: "#E5E7EB" }}
+            onChange={(e) => edited(setCategory)(e.target.value as Kitchen["category"])}
+            disabled={saving}
+            className="w-full rounded-lg border px-3 py-2 text-sm"
+            style={inputStyle}
           >
-            {CATEGORIES.map((c) => (
+            {!categoryKnown && <option value={category}>{category} (no longer offered, pick one)</option>}
+            {MERCHANT_CATEGORIES.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.label}
               </option>
@@ -156,101 +111,66 @@ export function MerchantEditForm({
         <Field label="Cuisine">
           <select
             value={cuisineType}
-            onChange={(e) => setCuisineType(e.target.value as CuisineType)}
-            className="w-full rounded-xl border px-3 py-2.5 text-sm"
-            style={{ borderColor: "#E5E7EB" }}
+            onChange={(e) => edited(setCuisineType)(e.target.value as Kitchen["cuisine_type"])}
+            disabled={saving}
+            className="w-full rounded-lg border px-3 py-2 text-sm"
+            style={inputStyle}
           >
-            {CUISINES.map((c) => (
+            {!cuisineKnown && <option value={cuisineType}>{cuisineType} (pick one)</option>}
+            {CUISINE_TYPES.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.label}
               </option>
             ))}
           </select>
         </Field>
-        <Field label="Neighbourhood">
-          <input
-            value={neighbourhood}
-            onChange={(e) => setNeighbourhood(e.target.value)}
-            required
-            className="w-full rounded-xl border px-3 py-2.5 text-sm"
-            style={{ borderColor: "#E5E7EB" }}
-          />
-        </Field>
-        <Field label="Description (optional)">
-          <textarea
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            rows={2}
-            className="w-full rounded-xl border px-3 py-2.5 text-sm"
-            style={{ borderColor: "#E5E7EB" }}
-          />
-        </Field>
-        <Field label="Kitchen photo URL (optional)">
-          <input
-            value={heroImage}
-            onChange={(e) => setHeroImage(e.target.value)}
-            placeholder="https://..."
-            className="w-full rounded-xl border px-3 py-2.5 text-sm"
-            style={{ borderColor: "#E5E7EB" }}
-          />
-        </Field>
-        <label className="flex items-center gap-2 text-sm font-medium" style={{ color: "var(--kb-ink)" }}>
-          <input type="checkbox" checked={isLive} onChange={(e) => setIsLive(e.target.checked)} />
-          Live in Customer app
+      </div>
+      <label className="flex items-center gap-2 text-sm" style={{ color: "var(--oc-text)" }}>
+        <input type="checkbox" checked={isHalal} disabled={saving} onChange={(e) => edited(setIsHalal)(e.target.checked)} />
+        Halal
+      </label>
+      <Field label={`Description (optional, up to ${DESCRIPTION_MAX} characters)`}>
+        <textarea
+          value={description}
+          onChange={(e) => edited(setDescription)(e.target.value)}
+          rows={3}
+          maxLength={DESCRIPTION_MAX}
+          disabled={saving}
+          className="w-full rounded-lg border px-3 py-2 text-sm"
+          style={inputStyle}
+        />
+      </Field>
+      <KitchenPhotoField
+        kitchenId={kitchenId}
+        label="Kitchen photo"
+        value={heroImage}
+        onChange={edited(setHeroImage)}
+        disabled={saving}
+      />
+      <div>
+        <label className="flex items-center gap-2 text-sm font-medium" style={{ color: "var(--oc-text)" }}>
+          <input type="checkbox" checked={isLive} disabled={saving} onChange={(e) => edited(setIsLive)(e.target.checked)} />
+          Live in the Customer app
         </label>
-      </section>
-
-      <section className="space-y-3 rounded-2xl bg-white p-4" style={{ color: "var(--kb-ink)" }}>
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold">Menu items</h2>
-          <button type="button" onClick={addItem} className="text-sm font-semibold" style={{ color: "var(--kb-purple)" }}>
-            + Add item
-          </button>
-        </div>
-        {items.map((it, i) => (
-          <div key={it.key} className="flex items-end gap-2 border-b pb-3 last:border-0" style={{ borderColor: "#E5E7EB" }}>
-            <Field label={`Item ${i + 1} name`} className="flex-[2]">
-              <input
-                value={it.name}
-                onChange={(e) => updateItem(it.key, { name: e.target.value })}
-                className="w-full rounded-xl border px-3 py-2.5 text-sm"
-                style={{ borderColor: "#E5E7EB" }}
-              />
-            </Field>
-            <Field label="Price ($)" className="flex-1">
-              <input
-                value={it.price}
-                onChange={(e) => updateItem(it.key, { price: e.target.value })}
-                inputMode="decimal"
-                className="w-full rounded-xl border px-3 py-2.5 text-sm"
-                style={{ borderColor: "#E5E7EB" }}
-              />
-            </Field>
-            <Field label="Photo URL" className="flex-[2]">
-              <input
-                value={it.photo_url}
-                onChange={(e) => updateItem(it.key, { photo_url: e.target.value })}
-                placeholder="https://..."
-                className="w-full rounded-xl border px-3 py-2.5 text-sm"
-                style={{ borderColor: "#E5E7EB" }}
-              />
-            </Field>
-            <button
-              type="button"
-              onClick={() => removeItem(it.key)}
-              disabled={items.length === 1}
-              className="mb-0.5 shrink-0 rounded-xl px-3 py-2.5 text-sm disabled:opacity-30"
-              style={{ background: "var(--kb-cream)" }}
-            >
-              Remove
-            </button>
-          </div>
-        ))}
-      </section>
+        <p className="mt-1 text-xs" style={{ color: "var(--oc-text-soft)" }}>
+          To go live, the cook must have accepted the partner terms and saved a pickup address in the Partner app, and the
+          menu needs at least one item that isn&apos;t hidden.
+        </p>
+      </div>
 
       {error && (
-        <p className="rounded-xl px-3 py-2 text-sm" style={{ background: "rgba(239,68,68,0.15)", color: "#B91C1C" }}>
-          {error}
+        <div role="alert" className="rounded-lg px-3 py-2 text-sm" style={{ background: "var(--oc-red-bg)", color: "var(--oc-red-fg)" }}>
+          <p>{error}</p>
+          {stale && (
+            <button type="button" onClick={() => window.location.reload()} className="mt-1 font-semibold underline">
+              Reload the page
+            </button>
+          )}
+        </div>
+      )}
+      {notice && (
+        <p role="status" className="rounded-lg px-3 py-2 text-sm" style={{ background: "var(--oc-green-bg)", color: "var(--oc-green-fg)" }}>
+          {notice}
         </p>
       )}
 
@@ -258,19 +178,19 @@ export function MerchantEditForm({
         type="submit"
         disabled={saving}
         aria-busy={saving}
-        className="flex w-full items-center justify-center gap-2 rounded-2xl py-3.5 text-[15px] font-semibold text-white disabled:opacity-60"
-        style={{ background: "linear-gradient(90deg, var(--kb-purple) 0%, var(--kb-green) 100%)" }}
+        className="inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+        style={{ background: "var(--oc-accent)" }}
       >
-        {saving && <Spinner className="size-4" />}
-        {saving ? "Saving…" : "Save changes"}
+        {saving && <Spinner className="size-3.5" />}
+        {saving ? "Saving…" : "Save kitchen details"}
       </button>
     </form>
   );
 }
 
-function Field({ label, children, className }: { label: string; children: React.ReactNode; className?: string }) {
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <label className={`block text-xs font-medium ${className ?? ""}`} style={{ color: "var(--kb-ink-soft)" }}>
+    <label className="block text-xs font-medium" style={{ color: "var(--oc-text-soft)" }}>
       {label}
       <div className="mt-1">{children}</div>
     </label>

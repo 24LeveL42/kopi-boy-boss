@@ -18,9 +18,13 @@ const FILES = walk(SRC).map((path) => ({ path, rel: relative(SRC, path).replace(
 const isUseServer = (text: string) => /^\s*(\/\/[^\n]*\n|\/\*[\s\S]*?\*\/\s*)*["']use server["'];?/.test(text);
 const ACTION_FILES = FILES.filter((f) => isUseServer(f.text));
 
-/** Exported async functions with the text that starts their body. */
+/**
+ * Exported async functions with the text that starts their body. The body is
+ * read with a lookahead so a short action can't swallow the next one's
+ * "export async function" and hide it from these checks.
+ */
 function actions(text: string) {
-  return [...text.matchAll(/export async function (\w+)\s*\([^)]*\)[^{]*\{([\s\S]{0,200})/g)].map((m) => ({ name: m[1], body: m[2] }));
+  return [...text.matchAll(/export async function (\w+)\s*\([^)]*\)[^{]*\{(?=([\s\S]{0,200}))/g)].map((m) => ({ name: m[1], body: m[2] }));
 }
 
 const FIRST_LINE = /^\s*(const \{[^}]*\} = )?await assertAdmin\(\);/;
@@ -44,20 +48,24 @@ test("server action files export nothing but async functions (no unguarded expor
   }
 });
 
-test("exactly the 11 known actions exist (a new one must be added here on purpose)", () => {
+test("exactly the 15 known actions exist (a new one must be added here on purpose)", () => {
   const names = ACTION_FILES.flatMap((f) => actions(f.text).map((a) => a.name)).sort();
   assert.deepEqual(names, [
+    "addMenuItem",
     "approveCookApplication",
     "approveRiderApplication",
     "deleteTestPartner",
     "rejectCookApplication",
     "rejectRiderApplication",
     "replyToAdminMessage",
+    "saveKitchenProfile",
     "setAdminMessageStatus",
     "setComplaintThreadStatus",
+    "setMenuItemHidden",
     "setPartnerActive",
     "setRiderRegions",
     "unblockMessageSender",
+    "updateMenuItem",
   ]);
 });
 

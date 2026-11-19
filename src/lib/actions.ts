@@ -6,6 +6,16 @@ import { approveAndNotify, type ApprovalResult } from "@/lib/approvals";
 import { deletePartnerWith, type DeleteReport } from "@/lib/delete-partner";
 import { setActiveWith } from "@/lib/partner-status";
 import { setRiderRegionsWith, type SaveResult } from "@/lib/regions";
+import {
+  addMenuItemWith,
+  saveKitchenProfileWith,
+  setMenuItemHiddenWith,
+  updateMenuItemWith,
+  type KitchenProfile,
+  type KitchenSaveResult,
+  type MenuItemInput,
+  type MenuItemResult,
+} from "@/lib/kitchen-admin";
 
 /*
  * Every export here is a server action: reachable by a direct POST, not just
@@ -144,5 +154,58 @@ export async function setRiderRegions(riderId: string, regions: string[]): Promi
     revalidatePath("/riders");
     revalidatePath(`/riders/${riderId}/edit`);
   }
+  return result;
+}
+
+/*
+ * HQ edits a merchant's kitchen and menu. All the database work is in
+ * kitchen-admin.ts (UPDATE only on kitchens, explicit columns, stale-edit
+ * check on updated_at, no deletes); these only check admin, call it and
+ * refresh the pages. Problems come back as a message, never thrown.
+ */
+function revalidateKitchen(kitchenId: string) {
+  revalidatePath("/merchants");
+  revalidatePath(`/merchants/${kitchenId}/edit`);
+}
+
+export async function saveKitchenProfile(
+  kitchenId: string,
+  loadedUpdatedAt: string,
+  profile: KitchenProfile
+): Promise<KitchenSaveResult> {
+  const { supabase } = await assertAdmin();
+  const result = await saveKitchenProfileWith(supabase, kitchenId, loadedUpdatedAt, profile);
+  if (result.ok) revalidateKitchen(kitchenId);
+  return result;
+}
+
+export async function addMenuItem(kitchenId: string, item: MenuItemInput): Promise<MenuItemResult> {
+  const { supabase } = await assertAdmin();
+  const result = await addMenuItemWith(supabase, kitchenId, item);
+  if (result.ok) revalidateKitchen(kitchenId);
+  return result;
+}
+
+export async function updateMenuItem(
+  kitchenId: string,
+  itemId: string,
+  loadedUpdatedAt: string,
+  item: MenuItemInput
+): Promise<MenuItemResult> {
+  const { supabase } = await assertAdmin();
+  const result = await updateMenuItemWith(supabase, kitchenId, itemId, loadedUpdatedAt, item);
+  if (result.ok) revalidateKitchen(kitchenId);
+  return result;
+}
+
+export async function setMenuItemHidden(
+  kitchenId: string,
+  itemId: string,
+  loadedUpdatedAt: string,
+  hidden: boolean
+): Promise<MenuItemResult> {
+  const { supabase } = await assertAdmin();
+  const result = await setMenuItemHiddenWith(supabase, kitchenId, itemId, loadedUpdatedAt, hidden);
+  if (result.ok) revalidateKitchen(kitchenId);
   return result;
 }
