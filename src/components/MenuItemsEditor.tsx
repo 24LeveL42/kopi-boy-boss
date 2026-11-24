@@ -2,10 +2,27 @@
 
 import { useState, useTransition } from "react";
 import { addMenuItem, setMenuItemHidden, updateMenuItem } from "@/lib/actions";
-import type { MenuItemResult } from "@/lib/kitchen-admin";
+import type { MenuItemInput, MenuItemResult } from "@/lib/kitchen-admin";
 import type { MenuItem } from "@/lib/types-kitchen";
 import { KitchenPhotoField } from "./KitchenPhotoField";
 import { Spinner } from "./Spinner";
+
+type PhotoPath = (file: { type: string; size: number }, uuid: string) => { ok: true; path: string } | { ok: false; message: string };
+
+/**
+ * The three item saves. The default is the live kitchen's (menu_items); an
+ * assisted-onboarding draft passes its own (assisted_shop_items), with the
+ * same arguments and results.
+ */
+export type MenuEditorActions = {
+  add: (ownerId: string, item: MenuItemInput) => Promise<MenuItemResult>;
+  update: (ownerId: string, itemId: string, loadedUpdatedAt: string, item: MenuItemInput) => Promise<MenuItemResult>;
+  setHidden: (ownerId: string, itemId: string, loadedUpdatedAt: string, hidden: boolean) => Promise<MenuItemResult>;
+};
+
+const KITCHEN_ACTIONS: MenuEditorActions = { add: addMenuItem, update: updateMenuItem, setHidden: setMenuItemHidden };
+
+type EditorContext = { actions: MenuEditorActions; photoPath?: PhotoPath; draft: boolean };
 
 /**
  * HQ adds, edits and hides a kitchen's menu items, one item per save, through
@@ -13,7 +30,21 @@ import { Spinner } from "./Spinner";
  * There is deliberately no delete: hiding keeps the item and its history, and
  * customers stop seeing it at once.
  */
-export function MenuItemsEditor({ kitchenId, initialItems }: { kitchenId: string; initialItems: MenuItem[] }) {
+export function MenuItemsEditor({
+  kitchenId,
+  initialItems,
+  actions = KITCHEN_ACTIONS,
+  photoPath,
+  draft = false,
+}: {
+  kitchenId: string;
+  initialItems: MenuItem[];
+  actions?: MenuEditorActions;
+  photoPath?: PhotoPath;
+  /** An assisted-onboarding draft: nothing is shown to customers yet, so the wording changes. */
+  draft?: boolean;
+}) {
+  const ctx: EditorContext = { actions, photoPath, draft };
   const [items, setItems] = useState<MenuItem[]>(initialItems);
   const [editingId, setEditingId] = useState<string | null>(null);
 
@@ -28,8 +59,9 @@ export function MenuItemsEditor({ kitchenId, initialItems }: { kitchenId: string
     <div className="space-y-5">
       <ItemGroup
         title={`On the menu (${visible.length})`}
-        empty="No visible items. Customers see an empty menu."
+        empty={draft ? "No visible items yet. Add at least one before sending the claim link." : "No visible items. Customers see an empty menu."}
         items={visible}
+        ctx={ctx}
         kitchenId={kitchenId}
         editingId={editingId}
         setEditingId={setEditingId}
@@ -37,16 +69,17 @@ export function MenuItemsEditor({ kitchenId, initialItems }: { kitchenId: string
       />
       {hidden.length > 0 && (
         <ItemGroup
-          title={`Hidden from customers (${hidden.length})`}
+          title={draft ? `Hidden: not copied to the shop (${hidden.length})` : `Hidden from customers (${hidden.length})`}
           empty=""
           items={hidden}
+          ctx={ctx}
           kitchenId={kitchenId}
           editingId={editingId}
           setEditingId={setEditingId}
           onSaved={replace}
         />
       )}
-      <AddItemForm kitchenId={kitchenId} onAdded={(item) => setItems((prev) => [...prev, item])} />
+      <AddItemForm ctx={ctx} kitchenId={kitchenId} onAdded={(item) => setItems((prev) => [...prev, item])} />
     </div>
   );
 }
@@ -55,6 +88,7 @@ function ItemGroup(props: {
   title: string;
   empty: string;
   items: MenuItem[];
+  ctx: EditorContext;
   kitchenId: string;
   editingId: string | null;
   setEditingId: (id: string | null) => void;
@@ -75,6 +109,7 @@ function ItemGroup(props: {
             props.editingId === item.id ? (
               <li key={item.id} className="p-3" style={{ borderColor: "var(--oc-line)" }}>
                 <EditItemForm
+                  ctx={props.ctx}
                   kitchenId={props.kitchenId}
                   item={item}
                   onDone={(saved) => {
@@ -86,6 +121,7 @@ function ItemGroup(props: {
             ) : (
               <ItemRow
                 key={item.id}
+                ctx={props.ctx}
                 kitchenId={props.kitchenId}
                 item={item}
                 onEdit={() => props.setEditingId(item.id)}
@@ -139,11 +175,13 @@ function ItemError({ error, stale }: { error: string | null; stale: boolean }) {
 }
 
 function ItemRow({
+  ctx,
   kitchenId,
   item,
   onEdit,
   onSaved,
 }: {
+  ctx: EditorContext;
   kitchenId: string;
   item: MenuItem;
   onEdit: () => void;
@@ -185,7 +223,7 @@ function ItemRow({
           type="button"
           disabled={pending}
           aria-busy={pending}
-          onClick={() => run(() => setMenuItemHidden(kitchenId, item.id, item.updated_at, !item.is_hidden), onSaved)}
+          onClick={() => run(() => ctx.actions.setHidden(kitchenId, item.id, item.updated_at, !item.is_hidden), onSaved)}
           className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm disabled:opacity-50"
           style={{ borderColor: "var(--oc-line)", color: "var(--oc-text)" }}
         >
@@ -199,6 +237,7 @@ function ItemRow({
 }
 
 function ItemFields({
+  photoPath,
   kitchenId,
   name,
   price,
@@ -208,6 +247,7 @@ function ItemFields({
   setPhoto,
   disabled,
 }: {
+  photoPath?: PhotoPath;
   kitchenId: string;
   name: string;
   price: string;
@@ -245,16 +285,18 @@ function ItemFields({
           />
         </label>
       </div>
-      <KitchenPhotoField kitchenId={kitchenId} label="Item photo" value={photo} onChange={setPhoto} disabled={disabled} />
+      <KitchenPhotoField kitchenId={kitchenId} label="Item photo" value={photo} onChange={setPhoto} disabled={disabled} uploadPath={photoPath} />
     </div>
   );
 }
 
 function EditItemForm({
+  ctx,
   kitchenId,
   item,
   onDone,
 }: {
+  ctx: EditorContext;
   kitchenId: string;
   item: MenuItem;
   onDone: (saved: MenuItem | null) => void;
@@ -266,12 +308,12 @@ function EditItemForm({
 
   function save(e: React.FormEvent) {
     e.preventDefault();
-    run(() => updateMenuItem(kitchenId, item.id, item.updated_at, { name, price, photo_url: photo || null }), onDone);
+    run(() => ctx.actions.update(kitchenId, item.id, item.updated_at, { name, price, photo_url: photo || null }), onDone);
   }
 
   return (
     <form onSubmit={save}>
-      <ItemFields kitchenId={kitchenId} name={name} price={price} photo={photo} setName={setName} setPrice={setPrice} setPhoto={setPhoto} disabled={pending} />
+      <ItemFields photoPath={ctx.photoPath} kitchenId={kitchenId} name={name} price={price} photo={photo} setName={setName} setPrice={setPrice} setPhoto={setPhoto} disabled={pending} />
       <ItemError error={error} stale={stale} />
       <div className="mt-3 flex gap-2">
         <button
@@ -298,7 +340,7 @@ function EditItemForm({
   );
 }
 
-function AddItemForm({ kitchenId, onAdded }: { kitchenId: string; onAdded: (item: MenuItem) => void }) {
+function AddItemForm({ ctx, kitchenId, onAdded }: { ctx: EditorContext; kitchenId: string; onAdded: (item: MenuItem) => void }) {
   const [name, setName] = useState("");
   const [price, setPrice] = useState("");
   const [photo, setPhoto] = useState("");
@@ -309,13 +351,13 @@ function AddItemForm({ kitchenId, onAdded }: { kitchenId: string; onAdded: (item
     e.preventDefault();
     setNotice(null);
     run(
-      () => addMenuItem(kitchenId, { name, price, photo_url: photo || null }),
+      () => ctx.actions.add(kitchenId, { name, price, photo_url: photo || null }),
       (item) => {
         onAdded(item);
         setName("");
         setPrice("");
         setPhoto("");
-        setNotice(`Added “${item.name}”. Customers can see it now.`);
+        setNotice(ctx.draft ? `Added “${item.name}” to the draft menu.` : `Added “${item.name}”. Customers can see it now.`);
       }
     );
   }
@@ -325,7 +367,7 @@ function AddItemForm({ kitchenId, onAdded }: { kitchenId: string; onAdded: (item
       <h3 className="mb-2 text-sm font-semibold" style={{ color: "var(--oc-text)" }}>
         Add a menu item
       </h3>
-      <ItemFields kitchenId={kitchenId} name={name} price={price} photo={photo} setName={setName} setPrice={setPrice} setPhoto={setPhoto} disabled={pending} />
+      <ItemFields photoPath={ctx.photoPath} kitchenId={kitchenId} name={name} price={price} photo={photo} setName={setName} setPrice={setPrice} setPhoto={setPhoto} disabled={pending} />
       <ItemError error={error} stale={stale} />
       {notice && (
         <p role="status" className="mt-2 rounded-lg px-3 py-2 text-sm" style={{ background: "var(--oc-green-bg)", color: "var(--oc-green-fg)" }}>

@@ -16,6 +16,22 @@ import {
   type MenuItemInput,
   type MenuItemResult,
 } from "@/lib/kitchen-admin";
+import { goLiveProblemWith } from "@/lib/kitchen-go-live";
+import {
+  addDraftItemWith,
+  cancelDraftShopWith,
+  createDraftShopWith,
+  issueClaimLinkWith,
+  markClaimLinkSentWith,
+  revokeClaimLinkWith,
+  saveDraftShopWith,
+  setDraftItemHiddenWith,
+  updateDraftItemWith,
+  type DraftItemResult,
+  type DraftSaveResult,
+  type IssueLinkResult,
+  type SimpleResult,
+} from "@/lib/assisted-onboarding";
 
 /*
  * Every export here is a server action: reachable by a direct POST, not just
@@ -174,6 +190,10 @@ export async function saveKitchenProfile(
   profile: KitchenProfile
 ): Promise<KitchenSaveResult> {
   const { supabase } = await assertAdmin();
+  // No switch to Live without PayNow (the database guard doesn't check it): see kitchen-go-live.ts.
+  const wantsLive = (profile as { is_live?: unknown } | null)?.is_live === true;
+  const blocked = await goLiveProblemWith(supabase, kitchenId, wantsLive);
+  if (blocked) return { ok: false, message: blocked };
   const result = await saveKitchenProfileWith(supabase, kitchenId, loadedUpdatedAt, profile);
   if (result.ok) revalidateKitchen(kitchenId);
   return result;
@@ -207,5 +227,91 @@ export async function setMenuItemHidden(
   const { supabase } = await assertAdmin();
   const result = await setMenuItemHiddenWith(supabase, kitchenId, itemId, loadedUpdatedAt, hidden);
   if (result.ok) revalidateKitchen(kitchenId);
+  return result;
+}
+
+/*
+ * Assisted onboarding: HQ sets up a draft shop and sends the owner a
+ * one-time claim link. All the database work is in assisted-onboarding.ts
+ * (explicit columns, stale-edit checks, no deletes, token hash only); these
+ * only check admin, call it and refresh the pages. Problems come back as a
+ * message, never thrown. issueAssistedClaimLink returns the raw token once,
+ * for the admin's screen; it is never logged or stored.
+ */
+function revalidateAssisted(shopId?: string) {
+  revalidatePath("/merchants/assisted");
+  if (shopId) revalidatePath(`/merchants/assisted/${shopId}`);
+}
+
+export async function createAssistedShop(shop: unknown): Promise<DraftSaveResult> {
+  const { supabase } = await assertAdmin();
+  const result = await createDraftShopWith(supabase, shop);
+  if (result.ok) revalidateAssisted();
+  return result;
+}
+
+export async function saveAssistedShop(shopId: string, loadedUpdatedAt: string, shop: unknown): Promise<DraftSaveResult> {
+  const { supabase } = await assertAdmin();
+  const result = await saveDraftShopWith(supabase, shopId, loadedUpdatedAt, shop);
+  if (result.ok) revalidateAssisted(shopId);
+  return result;
+}
+
+export async function addAssistedShopItem(shopId: string, item: MenuItemInput): Promise<DraftItemResult> {
+  const { supabase } = await assertAdmin();
+  const result = await addDraftItemWith(supabase, shopId, item);
+  if (result.ok) revalidateAssisted(shopId);
+  return result;
+}
+
+export async function updateAssistedShopItem(
+  shopId: string,
+  itemId: string,
+  loadedUpdatedAt: string,
+  item: MenuItemInput
+): Promise<DraftItemResult> {
+  const { supabase } = await assertAdmin();
+  const result = await updateDraftItemWith(supabase, shopId, itemId, loadedUpdatedAt, item);
+  if (result.ok) revalidateAssisted(shopId);
+  return result;
+}
+
+export async function setAssistedShopItemHidden(
+  shopId: string,
+  itemId: string,
+  loadedUpdatedAt: string,
+  hidden: boolean
+): Promise<DraftItemResult> {
+  const { supabase } = await assertAdmin();
+  const result = await setDraftItemHiddenWith(supabase, shopId, itemId, loadedUpdatedAt, hidden);
+  if (result.ok) revalidateAssisted(shopId);
+  return result;
+}
+
+export async function issueAssistedClaimLink(shopId: string): Promise<IssueLinkResult> {
+  const { supabase } = await assertAdmin();
+  const result = await issueClaimLinkWith(supabase, shopId);
+  if (result.ok) revalidateAssisted(shopId);
+  return result;
+}
+
+export async function markAssistedClaimLinkSent(shopId: string, tokenId: string): Promise<SimpleResult> {
+  const { supabase } = await assertAdmin();
+  const result = await markClaimLinkSentWith(supabase, tokenId);
+  if (result.ok) revalidateAssisted(shopId);
+  return result;
+}
+
+export async function revokeAssistedClaimLink(shopId: string, tokenId: string, reason: string): Promise<SimpleResult> {
+  const { supabase } = await assertAdmin();
+  const result = await revokeClaimLinkWith(supabase, tokenId, reason);
+  if (result.ok) revalidateAssisted(shopId);
+  return result;
+}
+
+export async function cancelAssistedShop(shopId: string, reason: string): Promise<SimpleResult> {
+  const { supabase } = await assertAdmin();
+  const result = await cancelDraftShopWith(supabase, shopId, reason);
+  if (result.ok) revalidateAssisted(shopId);
   return result;
 }

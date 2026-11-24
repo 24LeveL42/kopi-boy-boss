@@ -11,6 +11,9 @@ import { Spinner } from "./Spinner";
  * the only path the admin storage policy allows (insert only; HQ never
  * overwrites or deletes the cook's photos). The URL is saved later by the
  * form's own Save, through a server action.
+ *
+ * An assisted-onboarding draft passes uploadPath (assistedPhotoPath), so its
+ * photos go to assisted/<shopId>/<uuid>.<ext> instead.
  */
 export function KitchenPhotoField({
   kitchenId,
@@ -18,12 +21,15 @@ export function KitchenPhotoField({
   value,
   onChange,
   disabled,
+  uploadPath,
 }: {
   kitchenId: string;
   label: string;
   value: string;
   onChange: (url: string) => void;
   disabled?: boolean;
+  /** Where to upload instead of <kitchenId>/hq/ (assisted drafts). */
+  uploadPath?: (file: { type: string; size: number }, uuid: string) => { ok: true; path: string } | { ok: false; message: string };
 }) {
   const inputId = useId();
   const [uploading, setUploading] = useState(false);
@@ -34,7 +40,8 @@ export function KitchenPhotoField({
     e.target.value = "";
     if (!file) return;
     setError(null);
-    const target = hqPhotoPath(kitchenId, file, crypto.randomUUID());
+    const uuid = crypto.randomUUID();
+    const target = uploadPath ? uploadPath(file, uuid) : hqPhotoPath(kitchenId, file, uuid);
     if (!target.ok) {
       setError(target.message);
       return;

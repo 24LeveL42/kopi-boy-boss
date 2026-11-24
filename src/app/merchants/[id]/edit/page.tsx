@@ -7,6 +7,7 @@ import { MerchantEditForm } from "@/components/MerchantEditForm";
 import { MenuItemsEditor } from "@/components/MenuItemsEditor";
 import { KitchenAuditLog } from "@/components/KitchenAuditLog";
 import { getViewer, hasAdminRole } from "@/lib/require-admin";
+import { kitchenHasPaynowWith } from "@/lib/kitchen-go-live";
 import {
   KITCHEN_AUDIT_COLUMNS,
   kitchenLoadProblem,
@@ -30,7 +31,7 @@ export default async function EditMerchantPage({ params }: { params: Promise<{ i
   if (!user) return <LoginForm />;
   if (!(await hasAdminRole(supabase))) return <NotAuthorized />;
 
-  const [{ data: merchant }, kitchenResult, itemsResult, auditResult] = await Promise.all([
+  const [{ data: merchant }, kitchenResult, itemsResult, auditResult, hasPaynow] = await Promise.all([
     supabase.from("profiles").select("id, full_name").eq("id", id).maybeSingle<{ id: string; full_name: string | null }>(),
     supabase.from("kitchens").select(MERCHANT_EDIT_KITCHEN_COLUMNS).eq("id", id).maybeSingle<Kitchen>(),
     supabase.from("menu_items").select(MERCHANT_EDIT_MENU_COLUMNS).eq("kitchen_id", id).order("created_at").returns<MenuItem[]>(),
@@ -41,6 +42,8 @@ export default async function EditMerchantPage({ params }: { params: Promise<{ i
       .order("created_at", { ascending: false })
       .limit(50)
       .returns<AuditRow[]>(),
+    // Yes/no only; the details never reach this page.
+    kitchenHasPaynowWith(supabase, id),
   ]);
 
   if (!merchant) {
@@ -86,7 +89,7 @@ export default async function EditMerchantPage({ params }: { params: Promise<{ i
         <h2 className="mb-4 text-base font-semibold" style={{ color: "var(--oc-text)" }}>
           Kitchen details
         </h2>
-        <MerchantEditForm existingKitchen={kitchen} />
+        <MerchantEditForm existingKitchen={kitchen} hasPaynow={hasPaynow} />
       </Card>
 
       <Card className="mb-4 p-5">

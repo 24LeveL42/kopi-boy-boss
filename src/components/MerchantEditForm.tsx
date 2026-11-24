@@ -13,8 +13,17 @@ import { Spinner } from "./Spinner";
  * component never touches the database itself, except uploading a photo
  * file to storage. No PayNow, opening hours or anything the database fills in.
  */
-export function MerchantEditForm({ existingKitchen }: { existingKitchen: Kitchen }) {
+export function MerchantEditForm({
+  existingKitchen,
+  hasPaynow,
+}: {
+  existingKitchen: Kitchen;
+  /** Whether the owner has PayNow details (null = couldn't check). Without them HQ can't switch Live on. */
+  hasPaynow: boolean | null;
+}) {
   const kitchenId = existingKitchen.id;
+  // Unticking is always allowed; ticking needs PayNow (the save action checks again).
+  const liveLocked = !existingKitchen.is_live && hasPaynow !== true;
   const [businessName, setBusinessName] = useState(existingKitchen.business_name ?? "");
   const [category, setCategory] = useState(existingKitchen.category);
   const [cuisineType, setCuisineType] = useState(existingKitchen.cuisine_type);
@@ -149,13 +158,25 @@ export function MerchantEditForm({ existingKitchen }: { existingKitchen: Kitchen
       />
       <div>
         <label className="flex items-center gap-2 text-sm font-medium" style={{ color: "var(--oc-text)" }}>
-          <input type="checkbox" checked={isLive} disabled={saving} onChange={(e) => edited(setIsLive)(e.target.checked)} />
+          <input
+            type="checkbox"
+            checked={isLive}
+            disabled={saving || (liveLocked && !isLive)}
+            onChange={(e) => edited(setIsLive)(e.target.checked)}
+          />
           Live in the Customer app
         </label>
         <p className="mt-1 text-xs" style={{ color: "var(--oc-text-soft)" }}>
-          To go live, the cook must have accepted the partner terms and saved a pickup address in the Partner app, and the
-          menu needs at least one item that isn&apos;t hidden.
+          To go live, the cook must have accepted the partner terms, saved a pickup address and added PayNow details in the
+          Partner app, and the menu needs at least one item that isn&apos;t hidden.
         </p>
+        {liveLocked && (
+          <p className="mt-1 text-xs font-medium" style={{ color: "var(--oc-amber-fg)" }}>
+            {hasPaynow === null
+              ? "Live is switched off here: Boss couldn't check this kitchen's PayNow details. Reload the page to try again."
+              : "Live is switched off here: the owner hasn't added PayNow details yet. The kitchen goes live when they save them in the Partner app."}
+          </p>
+        )}
       </div>
 
       {error && (

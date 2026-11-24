@@ -48,23 +48,32 @@ test("server action files export nothing but async functions (no unguarded expor
   }
 });
 
-test("exactly the 15 known actions exist (a new one must be added here on purpose)", () => {
+test("exactly the 24 known actions exist (a new one must be added here on purpose)", () => {
   const names = ACTION_FILES.flatMap((f) => actions(f.text).map((a) => a.name)).sort();
   assert.deepEqual(names, [
+    "addAssistedShopItem",
     "addMenuItem",
     "approveCookApplication",
     "approveRiderApplication",
+    "cancelAssistedShop",
+    "createAssistedShop",
     "deleteTestPartner",
+    "issueAssistedClaimLink",
+    "markAssistedClaimLinkSent",
     "rejectCookApplication",
     "rejectRiderApplication",
     "replyToAdminMessage",
+    "revokeAssistedClaimLink",
+    "saveAssistedShop",
     "saveKitchenProfile",
     "setAdminMessageStatus",
+    "setAssistedShopItemHidden",
     "setComplaintThreadStatus",
     "setMenuItemHidden",
     "setPartnerActive",
     "setRiderRegions",
     "unblockMessageSender",
+    "updateAssistedShopItem",
     "updateMenuItem",
   ]);
 });
@@ -77,7 +86,7 @@ test("the only route handler is the sign-in callback, and it stays admin-free", 
 test("requireAdmin is gone; every admin page gates on getViewer + hasAdminRole", () => {
   for (const f of FILES) assert.doesNotMatch(f.text, /\brequireAdmin\b/, `${f.rel} still uses requireAdmin`);
   const pages = FILES.filter((f) => /^app\/.*page\.tsx$/.test(f.rel) && f.rel !== "app/login/page.tsx");
-  assert.equal(pages.length, 20);
+  assert.equal(pages.length, 23);
   for (const p of pages) {
     assert.match(p.text, /await getViewer\(\);\s*\n\s*if \(!user\) return <LoginForm \/>;/, `${p.rel}: login gate`);
     assert.match(p.text, /if \(!\(await hasAdminRole\(supabase\)\)\) return <NotAuthorized \/>;/, `${p.rel}: admin gate`);

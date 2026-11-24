@@ -20,6 +20,7 @@ const MAIN_LINKS: { label: string; href: string; count?: CountKey; tone?: "neutr
   { label: "Past orders", href: "/orders/past" },
   { label: "Refunds and disputes", href: "/refunds" },
   { label: "Merchants and addresses", href: "/merchants", count: "pendingCooks", tone: "amber" },
+  { label: "Assisted onboarding", href: "/merchants/assisted" },
   { label: "Riders", href: "/riders", count: "pendingRiders", tone: "amber" },
   { label: "Customers", href: "/customers" },
   { label: "Subscriptions", href: "/subscriptions" },
