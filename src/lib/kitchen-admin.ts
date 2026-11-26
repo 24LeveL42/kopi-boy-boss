@@ -19,6 +19,7 @@
  */
 import type { AnyClient } from "./admin-guard.ts";
 import type { CuisineType, MenuItem, MerchantCategory } from "./types-kitchen.ts";
+import { NO_UEN_MESSAGE } from "./kitchen-uen.ts";
 
 export const MERCHANT_CATEGORIES: readonly { id: MerchantCategory; label: string }[] = [
   { id: "home-cook", label: "Home Cook" },
@@ -180,6 +181,7 @@ export function friendlyKitchenError(message: string): string {
   if (/can't go live without at least one visible menu item/i.test(m)) {
     return "Can't put this kitchen live yet: it needs at least one menu item that isn't hidden. Untick Live to save your other changes.";
   }
+  if (/Add your business UEN/i.test(m)) return NO_UEN_MESSAGE;  // y_kitchen_live_needs_uen
   if (/kitchen is blocked/i.test(m)) {
     return "Can't put this kitchen live: the merchant is blocked. Reinstate them on the Merchants page first.";
   }

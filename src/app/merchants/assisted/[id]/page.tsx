@@ -19,6 +19,7 @@ import {
   toDraftItem,
   type AssistedAuditRow,
   type AssistedShop,
+  UEN_AFTER_CLAIM_LINE,
 } from "@/lib/assisted-onboarding";
 import type { MenuItem } from "@/lib/types-kitchen";
 
@@ -90,6 +91,8 @@ export default async function AssistedShopPage({ params }: { params: Promise<{ i
   const items = ((itemsResult.data ?? []) as Record<string, unknown>[]).map(toDraftItem).filter((i): i is MenuItem => i !== null);
   const isDraft = shop.status === "draft";
   const missing = claimReadiness(shop, items);
+  // Not Home Cook and no UEN: the owner adds it in Kitchen Setup after claiming (docs/supabase-assisted-uen-later.sql).
+  const uenLater = shop.category !== "home-cook" && !shop.business_uen;
   const audit = auditResult.data ?? [];
 
   // Names for the history: the admins, and the owner once claimed.
@@ -114,7 +117,9 @@ export default async function AssistedShopPage({ params }: { params: Promise<{ i
             {shop.acknowledged_at && <> · partner terms acknowledged {formatSgt(shop.acknowledged_at)}</>}
           </p>
           <p className="mt-1" style={{ color: "var(--oc-text-soft)" }}>
-            The kitchen goes live when the owner saves their PayNow details in the Partner app.
+            {uenLater
+              ? "The draft had no UEN, so the owner adds it in Kitchen Setup (the merchant page shows whether it's in). The kitchen goes live when the UEN and their PayNow details are saved in the Partner app."
+              : "The kitchen goes live when the owner saves their PayNow details in the Partner app."}
           </p>
           {shop.claimed_user_id && (
             <Link
@@ -129,6 +134,11 @@ export default async function AssistedShopPage({ params }: { params: Promise<{ i
       )}
 
       <Section title="Shop details">
+        {uenLater && shop.status !== "claimed" && (
+          <p className="mb-4 inline-block rounded-lg px-3 py-1.5 text-xs font-medium" style={{ background: "var(--oc-amber-bg)", color: "var(--oc-amber-fg)" }}>
+            {UEN_AFTER_CLAIM_LINE}
+          </p>
+        )}
         <AssistedShopForm shop={shop} readOnly={!isDraft} />
       </Section>
 

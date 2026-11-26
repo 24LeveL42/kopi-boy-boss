@@ -14,12 +14,13 @@ what to do and what you should see.
   (part H) straight away.
 - Write down as you go: the draft id (from the address bar), the claim time
   and the kitchen id.
-- **UEN after claiming** (docs/supabase-assisted-uen-later.sql): do NOT
-  issue any real claim link, to a real owner or to your own spare number,
-  for a shop with no UEN until the Partner Kitchen Setup UEN step ("Add
-  your UEN to go live") is deployed. Today's Kitchen Setup asks for live on
-  every save, and the database refuses live without a UEN, so that owner
-  couldn't save their PayNow details. Until then, test that path only with
+- **UEN after claiming** (docs/supabase-assisted-uen-later.sql, installed
+  on live, its live test passed): the UEN is optional on the draft for every
+  category. A shop that isn't Home Cook can be claimed without one; the
+  owner adds it in Partner Kitchen Setup, and the database refuses to put
+  the shop live until it's in. Send a claim link for a shop with no UEN only
+  once the Partner Kitchen Setup UEN step ("Add your UEN to go live") is
+  deployed; until then, test that path only with
   `docs/supabase-assisted-uen-later-live-test.sql` (it always rolls back).
 
 Placeholders: `<SPARE-MOBILE>` is your spare number (8 digits);
@@ -52,6 +53,8 @@ Placeholders: `<SPARE-MOBILE>` is your spare number (8 digits);
    - [ ] **Create draft** opens the draft page.
    - [ ] The mobile is saved as 8 digits.
    - [ ] There's no PayNow field anywhere; a note says the owner adds it after claiming.
+   - [ ] The UEN field says **Business UEN (optional)**, with the note "Leave empty if the owner doesn't have it to hand: they add it after claiming, and the shop can't go live without it."
+   - [ ] The draft page shows **UEN: owner adds after claiming** above the form.
 4. Validation: try each of these on the draft page, one at a time, and tap **Save draft**.
    - [ ] Mobile `71234567`: "Owner mobile must be a Singapore mobile number…"
    - [ ] UEN `12345`: "That UEN doesn't look right…"
@@ -101,14 +104,19 @@ Placeholders: `<SPARE-MOBILE>` is your spare number (8 digits);
    - [ ] It moves to "Hidden: not copied to the shop (1)".
    - [ ] **Show again** brings it back; hide it again.
 2. Claim link section (no address or UEN yet):
-   - [ ] "Before you can send a link, add:" lists Pickup address, Postal code and Business UEN.
+   - [ ] "Before you can send a link, add:" lists Pickup address and Postal code. It does **not** ask for a UEN.
    - [ ] **Create claim link** is greyed out.
-3. Fill in the address `Blk 1 Test Lane #01-01`, a **real** postal code (the
-   Partner app looks it up on the owner's first save), and UEN `53123456A`. Save.
-   - [ ] The list is gone and **Create claim link** is enabled.
-4. Home Cook check: change the category to Home Cook, clear the UEN and save.
-   - [ ] The list doesn't ask for a UEN.
-   - [ ] Set it back to Hawker with UEN `53123456A` and save.
+3. Fill in the address `Blk 1 Test Lane #01-01` and a **real** postal code (the
+   Partner app looks it up on the owner's first save). Leave the UEN empty. Save.
+   - [ ] The list is gone and **Create claim link** is enabled, with no UEN.
+   - [ ] **UEN: owner adds after claiming** is still shown.
+4. Typed UEN: enter UEN `53123456A` and save.
+   - [ ] "Saved." and the **UEN: owner adds after claiming** line is gone.
+   - [ ] Clear it again and save (the rest of this test claims a shop with no UEN).
+     If the Partner UEN step isn't deployed yet, keep `53123456A` instead and skip F7b and F10b.
+5. Home Cook check: change the category to Home Cook and save.
+   - [ ] The UEN label says "(not needed for a Home Cook)"; no after-claiming note or line.
+   - [ ] Set it back to Hawker and save.
 
 ## E. Boss: the claim link
 
@@ -167,6 +175,18 @@ exact wording is up to the Partner page; what matters is the outcome.
 7. In Boss, open the merchant's kitchen (Merchants and addresses).
    - [ ] It's listed and not live.
    - [ ] On its edit page, **Live** can't be ticked; the note says the owner hasn't added PayNow yet.
+   - [ ] (Shop claimed with no UEN) The **Business UEN** card shows **UEN pending** ("the owner adds it in
+     Kitchen Setup. The shop can't go live until it's in.") with the UEN form open, and a "UEN pending" note under Live.
+
+### F7b. Partner: the UEN after claiming (shop claimed with no UEN)
+
+1. On the phone, in Kitchen Setup, save PayNow **without** a UEN.
+   - [ ] The shop does **not** go live; Kitchen Setup asks for the UEN ("Add your UEN to go live"; exact wording is up to the Partner page).
+2. Enter `12345` as the UEN.
+   - [ ] Refused: "That doesn't look like a valid UEN…".
+3. Enter `53123456A` and save.
+   - [ ] The shop goes live. **Untick Live straight away in Boss.**
+   - [ ] Boss's **Business UEN** card shows `53123456A` (reload), and **UEN pending** is gone.
 8. Tap the WhatsApp link again on the phone.
    - [ ] A refusal saying the link has already been used (status `used`).
    - [ ] A second tap never makes a second account.
@@ -177,6 +197,24 @@ exact wording is up to the Partner page; what matters is the outcome.
 10. Boss again:
     - [ ] The kitchen's edit page now allows Live.
     - [ ] Unticking Live and saving works.
+
+### F10b. Boss: HQ sets or corrects the UEN (merchant edit page, **Business UEN** card)
+
+Use the test kitchen only.
+1. Tap **Correct the UEN**. Enter `201912345K`, the business name typed wrongly, and a reason.
+   - [ ] "Not saved: Type the kitchen's business name exactly to confirm."
+2. With the right business name but an empty reason:
+   - [ ] **Save business UEN** stays greyed out.
+3. UEN `12345`, right name, a reason:
+   - [ ] "Not saved: That UEN doesn't look right…" (nothing reaches the database).
+4. UEN `201912345k` (lower case), right name, reason `test correction`:
+   - [ ] "Saved. The business UEN is now 201912345K…", and the card shows `201912345K`.
+   - [ ] The change history shows the `business_uen` change with the reason `test correction`.
+5. Set it back to `53123456A` the same way, with a reason.
+6. Database refusal wording: on a kitchen that isn't live, with **UEN pending**, try to tick Live.
+   - [ ] Live can't be ticked, and the note says "UEN pending: Live is switched off here…".
+     (If the database refuses it anyway, the message reads "Can't put this kitchen live yet: it needs a business UEN…".)
+7. A Home Cook kitchen's card says "Home Cook: no business UEN needed." with no form.
 11. Rate limit: in another private window, open the claim page with a made-up
     token (`https://partners.kopi-boy.com/claim#AAAA…`, 43 characters) and reload it 11 times.
     - [ ] After 10 tries, a "too many tries, try again later" refusal (status `rate_limited`, HTTP 429).

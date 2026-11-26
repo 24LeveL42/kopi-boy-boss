@@ -16,14 +16,19 @@ import { Spinner } from "./Spinner";
 export function MerchantEditForm({
   existingKitchen,
   hasPaynow,
+  uenPending = false,
 }: {
   existingKitchen: Kitchen;
   /** Whether the owner has PayNow details (null = couldn't check). Without them HQ can't switch Live on. */
   hasPaynow: boolean | null;
+  /** The kitchen needs a business UEN and has none (kitchen-uen.ts). The database refuses Live without it. */
+  uenPending?: boolean;
 }) {
   const kitchenId = existingKitchen.id;
   // Unticking is always allowed; ticking needs PayNow (the save action checks again).
   const liveLocked = !existingKitchen.is_live && hasPaynow !== true;
+  // ...and a UEN, when the kitchen needs one (the database refuses it too).
+  const uenLocked = !existingKitchen.is_live && uenPending;
   const [businessName, setBusinessName] = useState(existingKitchen.business_name ?? "");
   const [category, setCategory] = useState(existingKitchen.category);
   const [cuisineType, setCuisineType] = useState(existingKitchen.cuisine_type);
@@ -161,20 +166,26 @@ export function MerchantEditForm({
           <input
             type="checkbox"
             checked={isLive}
-            disabled={saving || (liveLocked && !isLive)}
+            disabled={saving || ((liveLocked || uenLocked) && !isLive)}
             onChange={(e) => edited(setIsLive)(e.target.checked)}
           />
           Live in the Customer app
         </label>
         <p className="mt-1 text-xs" style={{ color: "var(--oc-text-soft)" }}>
           To go live, the cook must have accepted the partner terms, saved a pickup address and added PayNow details in the
-          Partner app, and the menu needs at least one item that isn&apos;t hidden.
+          Partner app (and a business UEN, unless it&apos;s a Home Cook), and the menu needs at least one item that isn&apos;t hidden.
         </p>
         {liveLocked && (
           <p className="mt-1 text-xs font-medium" style={{ color: "var(--oc-amber-fg)" }}>
             {hasPaynow === null
               ? "Live is switched off here: Boss couldn't check this kitchen's PayNow details. Reload the page to try again."
               : "Live is switched off here: the owner hasn't added PayNow details yet. The kitchen goes live when they save them in the Partner app."}
+          </p>
+        )}
+        {uenLocked && (
+          <p className="mt-1 text-xs font-medium" style={{ color: "var(--oc-amber-fg)" }}>
+            UEN pending: Live is switched off here until the kitchen has a business UEN. The owner adds it in Kitchen Setup,
+            or set it under Business UEN below.
           </p>
         )}
       </div>

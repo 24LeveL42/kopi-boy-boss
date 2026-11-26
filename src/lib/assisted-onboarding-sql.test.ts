@@ -381,23 +381,36 @@ async function createDraftAs() {
 }
 
 describe("claim links", () => {
-  it("can't be issued until the draft is ready; Boss's readiness list agrees with the database", async () => {
-    const shopId = await createDraft({ owner_mobile: "82222221", business_uen: null, business_address: null });
-    const shop = await one<{ status: "draft"; category: string; business_uen: null; business_address: null; postal_code: string }>(
-      "select status, category, business_uen, business_address, postal_code from public.assisted_shops where id = $1",
-      [shopId]
-    );
-    assert.equal(claimReadiness(shop as never, []).length, 3);
-    await rejects(issue(shopId), /pickup address and postal code/);
-    await as("admin", () => q("update public.assisted_shops set business_address = 'Blk 2' where id = $1", [shopId]));
-    await rejects(issue(shopId), /business UEN/);
-    await as("admin", () => q("update public.assisted_shops set business_uen = '53123456A' where id = $1", [shopId]));
-    await rejects(issue(shopId), /at least one menu item/);
-    const hiddenId = await addItem(shopId);
-    await as("admin", () => q("update public.assisted_shop_items set is_hidden = true where id = $1", [hiddenId]));
-    await rejects(issue(shopId), /at least one menu item/);
-    await addItem(shopId, "Visible");
-    await issue(shopId);
+  it("can't be issued until the draft is ready (address, postal code, a visible item; no UEN); Boss's readiness list agrees with the database", async () => {
+    // The rule as live since docs/supabase-assisted-uen-later.sql: run on that stack. as(), q() and
+    // createDraft() use db, so it is swapped for this test and put back after.
+    const main = db;
+    db = await uenStack();
+    try {
+      assert.equal((await runScript(db, UEN_LATER)).result, "UEN LATER INSTALLED");
+      const shopId = await createDraft({ owner_mobile: "82222221", business_uen: null, business_address: null });
+      const shop = await one<{ status: "draft"; category: string; business_uen: null; business_address: null; postal_code: string }>(
+        "select status, category, business_uen, business_address, postal_code from public.assisted_shops where id = $1",
+        [shopId]
+      );
+      assert.equal(shop.category, "hawker");
+      assert.deepEqual(claimReadiness(shop as never, []), ["Pickup address", "At least one menu item that isn't hidden"]);
+      await rejects(issue(shopId), /pickup address and postal code/);
+      await as("admin", () => q("update public.assisted_shops set business_address = 'Blk 2' where id = $1", [shopId]));
+      // No UEN, and the next refusal is the menu: the UEN is no longer asked for.
+      await rejects(issue(shopId), /at least one menu item/);
+      const hiddenId = await addItem(shopId);
+      await as("admin", () => q("update public.assisted_shop_items set is_hidden = true where id = $1", [hiddenId]));
+      await rejects(issue(shopId), /at least one menu item/);
+      await addItem(shopId, "Visible");
+      const items = await q<{ is_hidden: boolean }>("select is_hidden from public.assisted_shop_items where shop_id = $1", [shopId]);
+      assert.deepEqual(claimReadiness({ status: "draft", business_address: "Blk 2", postal_code: "310123" }, items), []);
+      await issue(shopId);
+      assert.equal((await one<{ u: string | null }>("select business_uen as u from public.assisted_shops where id = $1", [shopId])).u, null);
+    } finally {
+      await db.close();
+      db = main;
+    }
   });
 
   it("a Home Cook needs no UEN", async () => {

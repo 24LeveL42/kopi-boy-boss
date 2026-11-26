@@ -100,6 +100,10 @@ export function fakeSupabase(respond: Record<string, Result | Result[]>) {
           (call.order ??= []).push(column);
           return builder;
         },
+        limit(n: number) {
+          call.filters.push(["limit", n]);
+          return builder;
+        },
         maybeSingle() {
           return Promise.resolve(settle());
         },

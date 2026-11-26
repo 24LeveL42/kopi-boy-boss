@@ -17,6 +17,7 @@ import {
   type MenuItemResult,
 } from "@/lib/kitchen-admin";
 import { goLiveProblemWith } from "@/lib/kitchen-go-live";
+import { setKitchenBusinessUenWith, type SetUenResult } from "@/lib/kitchen-uen";
 import {
   addDraftItemWith,
   cancelDraftShopWith,
@@ -196,11 +197,29 @@ export async function saveKitchenProfile(
   profile: KitchenProfile
 ): Promise<KitchenSaveResult> {
   const { supabase } = await assertAdmin();
-  // No switch to Live without PayNow (the database guard doesn't check it): see kitchen-go-live.ts.
+  // No switch to Live without PayNow (the database guard doesn't check it), and a plain-words
+  // refusal when a UEN is missing (the database refuses that too): see kitchen-go-live.ts.
   const wantsLive = (profile as { is_live?: unknown } | null)?.is_live === true;
   const blocked = await goLiveProblemWith(supabase, kitchenId, wantsLive);
   if (blocked) return { ok: false, message: blocked };
   const result = await saveKitchenProfileWith(supabase, kitchenId, loadedUpdatedAt, profile);
+  if (result.ok) revalidateKitchen(kitchenId);
+  return result;
+}
+
+/*
+ * HQ sets or corrects a kitchen's business UEN: one call to
+ * admin_set_kitchen_business_uen (admins only; it re-checks the format, the
+ * typed business name and the reason, and logs it in kitchen_admin_audit).
+ */
+export async function setKitchenBusinessUen(
+  kitchenId: string,
+  uen: string,
+  confirmBusinessName: string,
+  reason: string
+): Promise<SetUenResult> {
+  const { supabase } = await assertAdmin();
+  const result = await setKitchenBusinessUenWith(supabase, kitchenId, uen, confirmBusinessName, reason);
   if (result.ok) revalidateKitchen(kitchenId);
   return result;
 }

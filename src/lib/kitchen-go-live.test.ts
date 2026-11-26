@@ -2,7 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fakeSupabase, fail, ok } from "./testing/fake-supabase.ts";
-import { goLiveProblemWith, kitchenHasPaynowWith, NO_PAYNOW_MESSAGE, PAYNOW_CHECK_FAILED_MESSAGE } from "./kitchen-go-live.ts";
+import { goLiveProblemWith, kitchenHasPaynowWith, NO_PAYNOW_MESSAGE, NO_UEN_MESSAGE, PAYNOW_CHECK_FAILED_MESSAGE } from "./kitchen-go-live.ts";
+import { friendlyKitchenError } from "./kitchen-admin.ts";
 
 const KITCHEN = "24fd6ea3-abd2-4e0a-a8de-83e725a1351e";
 const src = (p: string) => readFileSync(new URL(p, import.meta.url), "utf8");
@@ -47,6 +48,34 @@ test("switching on Live: refused without PayNow, or when it can't be checked; al
   assert.equal(await goLiveProblemWith(has.client, KITCHEN, true), null);
 });
 
+test("switching on Live with PayNow: refused in plain words when the kitchen needs a UEN and has none", async () => {
+  const paynow = { "rpc.admin_get_kitchen_private": ok([{ paynow_type: "mobile", paynow_value: "91234567" }]) };
+  const noUen = { "kitchens.select": [ok({ id: KITCHEN, is_live: false }), ok({ id: KITCHEN, business_uen: null })] };
+  const hawker = fakeSupabase({ ...paynow, ...noUen, "cook_applications.select": ok({ business_type: "Hawker" }) });
+  assert.equal(await goLiveProblemWith(hawker.client, KITCHEN, true), NO_UEN_MESSAGE);
+  assert.deepEqual(hawker.calls.find((c) => c.name === "cook_applications")?.filters, [["user_id", KITCHEN], ["status", "approved"], ["limit", 1]]);
+
+  const homeCook = fakeSupabase({ ...paynow, ...noUen, "cook_applications.select": ok({ business_type: "Home Cook" }) });
+  assert.equal(await goLiveProblemWith(homeCook.client, KITCHEN, true), null);
+  const withUen = fakeSupabase({
+    ...paynow,
+    "kitchens.select": [ok({ id: KITCHEN, is_live: false }), ok({ id: KITCHEN, business_uen: "53123456A" })],
+    "cook_applications.select": ok({ business_type: "Hawker" }),
+  });
+  assert.equal(await goLiveProblemWith(withUen.client, KITCHEN, true), null);
+  // Can't read it: the save goes ahead and the database decides.
+  const unread = fakeSupabase({ ...paynow, ...noUen, "cook_applications.select": fail("boom") });
+  assert.equal(await goLiveProblemWith(unread.client, KITCHEN, true), null);
+});
+
+test("the database's own refusal (y_kitchen_live_needs_uen) reads the same", () => {
+  assert.equal(
+    friendlyKitchenError("Add your business UEN (Business Registration Number) in Kitchen Setup before your shop goes live."),
+    NO_UEN_MESSAGE
+  );
+  assert.match(NO_UEN_MESSAGE, /Untick Live to save your other changes/);
+});
+
 test("saveKitchenProfile checks Live against PayNow before saving", () => {
   const actions = src("./actions.ts");
   const start = actions.indexOf("export async function saveKitchenProfile(");
@@ -60,8 +89,11 @@ test("saveKitchenProfile checks Live against PayNow before saving", () => {
 test("the edit form locks Live (ticking only) without PayNow; the page passes only a yes/no", () => {
   const form = src("../components/MerchantEditForm.tsx");
   assert.match(form, /const liveLocked = !existingKitchen\.is_live && hasPaynow !== true;/);
-  assert.match(form, /disabled=\{saving \|\| \(liveLocked && !isLive\)\}/);
+  assert.match(form, /disabled=\{saving \|\| \(\(liveLocked \|\| uenLocked\) && !isLive\)\}/);
   const page = src("../app/merchants/[id]/edit/page.tsx");
   assert.match(page, /kitchenHasPaynowWith\(supabase, id\)/);
-  assert.match(page, /<MerchantEditForm existingKitchen=\{kitchen\} hasPaynow=\{hasPaynow\} \/>/);
+  assert.match(page, /<MerchantEditForm existingKitchen=\{kitchen\} hasPaynow=\{hasPaynow\} uenPending=\{uenStatus\.state === "pending"\} \/>/);
+  // UEN pending also locks ticking Live; unticking stays allowed.
+  assert.match(form, /const uenLocked = !existingKitchen\.is_live && uenPending;/);
+  assert.match(page, /kitchenUenStatusWith\(supabase, id\)/);
 });

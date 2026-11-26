@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { createAssistedShop, saveAssistedShop } from "@/lib/actions";
 import { CUISINE_TYPES, DESCRIPTION_MAX, MERCHANT_CATEGORIES } from "@/lib/kitchen-admin";
-import { ADDRESS_MAX, assistedPhotoPath, OWNER_NAME_MAX, type AssistedShop } from "@/lib/assisted-onboarding";
+import { ADDRESS_MAX, assistedPhotoPath, OWNER_NAME_MAX, UEN_LATER_NOTE, type AssistedShop } from "@/lib/assisted-onboarding";
 import type { CuisineType, MerchantCategory } from "@/lib/types-kitchen";
 import { KitchenPhotoField } from "./KitchenPhotoField";
 import { Spinner } from "./Spinner";
@@ -15,6 +15,9 @@ import { Spinner } from "./Spinner";
  * stale-edit check); this component never touches the database itself,
  * except uploading a photo to kitchen-photos/assisted/<shopId>/.
  * No PayNow here: the owner adds it in the Partner app after claiming.
+ * The UEN is optional for every category (docs/supabase-assisted-uen-later.sql):
+ * if it's left empty the owner adds it in Kitchen Setup after claiming, and the
+ * database won't let the shop go live without it. A typed UEN is still checked.
  * The photo can be added once the draft exists (the upload path needs its id).
  */
 export function AssistedShopForm({ shop, readOnly = false }: { shop?: AssistedShop; readOnly?: boolean }) {
@@ -169,9 +172,16 @@ export function AssistedShopForm({ shop, readOnly = false }: { shop?: AssistedSh
             />
           </Field>
         </div>
-        <Field label={category === "home-cook" ? "Business UEN (not needed for a Home Cook)" : "Business UEN (needed before you send the link)"}>
-          <input value={uen} onChange={(e) => edited(setUen)(e.target.value)} maxLength={10} placeholder="53123456A" className={`${input} uppercase`} style={inputStyle} />
-        </Field>
+        <div>
+          <Field label={category === "home-cook" ? "Business UEN (not needed for a Home Cook)" : "Business UEN (optional)"}>
+            <input value={uen} onChange={(e) => edited(setUen)(e.target.value)} maxLength={10} placeholder="53123456A" className={`${input} uppercase`} style={inputStyle} />
+          </Field>
+          {category !== "home-cook" && (
+            <p className="mt-1 text-xs" style={{ color: "var(--oc-text-soft)" }}>
+              {UEN_LATER_NOTE}
+            </p>
+          )}
+        </div>
         <div className="grid gap-4 sm:grid-cols-[3fr_1fr]">
           <Field label="Pickup address (needed before you send the link)">
             <input value={address} onChange={(e) => edited(setAddress)(e.target.value)} maxLength={ADDRESS_MAX} placeholder="Blk 123 Example Street #01-23" className={input} style={inputStyle} />

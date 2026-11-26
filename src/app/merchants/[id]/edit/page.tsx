@@ -6,8 +6,10 @@ import { Card, LoadError } from "@/components/ops/EmptyState";
 import { MerchantEditForm } from "@/components/MerchantEditForm";
 import { MenuItemsEditor } from "@/components/MenuItemsEditor";
 import { KitchenAuditLog } from "@/components/KitchenAuditLog";
+import { KitchenUenPanel } from "@/components/KitchenUenPanel";
 import { getViewer, hasAdminRole } from "@/lib/require-admin";
 import { kitchenHasPaynowWith } from "@/lib/kitchen-go-live";
+import { kitchenUenStatusWith } from "@/lib/kitchen-uen";
 import {
   KITCHEN_AUDIT_COLUMNS,
   kitchenLoadProblem,
@@ -31,7 +33,7 @@ export default async function EditMerchantPage({ params }: { params: Promise<{ i
   if (!user) return <LoginForm />;
   if (!(await hasAdminRole(supabase))) return <NotAuthorized />;
 
-  const [{ data: merchant }, kitchenResult, itemsResult, auditResult, hasPaynow] = await Promise.all([
+  const [{ data: merchant }, kitchenResult, itemsResult, auditResult, hasPaynow, uenStatus] = await Promise.all([
     supabase.from("profiles").select("id, full_name").eq("id", id).maybeSingle<{ id: string; full_name: string | null }>(),
     supabase.from("kitchens").select(MERCHANT_EDIT_KITCHEN_COLUMNS).eq("id", id).maybeSingle<Kitchen>(),
     supabase.from("menu_items").select(MERCHANT_EDIT_MENU_COLUMNS).eq("kitchen_id", id).order("created_at").returns<MenuItem[]>(),
@@ -44,6 +46,8 @@ export default async function EditMerchantPage({ params }: { params: Promise<{ i
       .returns<AuditRow[]>(),
     // Yes/no only; the details never reach this page.
     kitchenHasPaynowWith(supabase, id),
+    // Whether it needs a UEN is decided by the approved application, as the database decides it.
+    kitchenUenStatusWith(supabase, id),
   ]);
 
   if (!merchant) {
@@ -89,7 +93,18 @@ export default async function EditMerchantPage({ params }: { params: Promise<{ i
         <h2 className="mb-4 text-base font-semibold" style={{ color: "var(--oc-text)" }}>
           Kitchen details
         </h2>
-        <MerchantEditForm existingKitchen={kitchen} hasPaynow={hasPaynow} />
+        <MerchantEditForm existingKitchen={kitchen} hasPaynow={hasPaynow} uenPending={uenStatus.state === "pending"} />
+      </Card>
+
+      <Card className="mb-4 p-5">
+        <h2 className="mb-1 text-base font-semibold" style={{ color: "var(--oc-text)" }}>
+          Business UEN
+        </h2>
+        <p className="mb-4 text-sm" style={{ color: "var(--oc-text-soft)" }}>
+          Every kitchen except a Home Cook needs one to go live. Set or correct it here; each change needs the business name
+          and a reason, and is recorded in the change history.
+        </p>
+        <KitchenUenPanel kitchenId={kitchen.id} businessName={kitchen.business_name} status={uenStatus} />
       </Card>
 
       <Card className="mb-4 p-5">

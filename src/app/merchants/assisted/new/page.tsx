@@ -14,7 +14,7 @@ export default async function NewAssistedShopPage() {
   return (
     <AdminShell
       title="New assisted shop"
-      subtitle="Fill in what you know now. The address, postal code, UEN and menu can be added before you send the claim link."
+      subtitle="Fill in what you know now. The address, postal code and menu can be added before you send the claim link. The UEN can wait: the owner adds it after claiming."
     >
       <Card className="mb-4 p-5">
         <AssistedShopForm />

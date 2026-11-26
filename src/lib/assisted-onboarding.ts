@@ -220,19 +220,28 @@ export function validateDraftShop(input: unknown): Checked<DraftShopFields> {
   };
 }
 
+/** Under the draft form's UEN field (every category except Home Cook). */
+export const UEN_LATER_NOTE =
+  "Leave empty if the owner doesn't have it to hand: they add it after claiming, and the shop can't go live without it.";
+
+/** The draft page's line for a shop that isn't Home Cook and has no UEN yet. */
+export const UEN_AFTER_CLAIM_LINE = "UEN: owner adds after claiming";
+
 /**
  * What's still missing before a claim link can be issued. Mirrors the
- * checks in admin_issue_assisted_claim_link (the database decides).
+ * checks in admin_issue_assisted_claim_link (the database decides): the
+ * pickup address, postal code and a visible menu item. No UEN since
+ * docs/supabase-assisted-uen-later.sql: the owner adds it after claiming,
+ * and y_kitchen_live_needs_uen keeps the shop from going live without it.
  */
 export function claimReadiness(
-  shop: Pick<AssistedShop, "status" | "category" | "business_uen" | "business_address" | "postal_code">,
+  shop: Pick<AssistedShop, "status" | "business_address" | "postal_code">,
   items: Pick<MenuItem, "is_hidden">[]
 ): string[] {
   if (shop.status !== "draft") return ["This shop is no longer a draft."];
   const missing: string[] = [];
   if (!shop.business_address) missing.push("Pickup address");
   if (!shop.postal_code) missing.push("Postal code");
-  if (shop.category !== "home-cook" && !shop.business_uen) missing.push("Business UEN (needed for every category except Home Cook)");
   if (!items.some((i) => !i.is_hidden)) missing.push("At least one menu item that isn't hidden");
   return missing;
 }

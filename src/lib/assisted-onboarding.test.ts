@@ -33,6 +33,8 @@ import {
   STALE_DRAFT_ITEM_MESSAGE,
   STALE_DRAFT_MESSAGE,
   toDraftItem,
+  UEN_AFTER_CLAIM_LINE,
+  UEN_LATER_NOTE,
   updateDraftItemWith,
   validateDraftShop,
   whatsappUrl,
@@ -127,17 +129,34 @@ test("a draft with a bad field is refused with a message HQ can act on", () => {
   assert.equal(validateDraftShop(null).ok, false);
 });
 
-test("claim readiness mirrors admin_issue_assisted_claim_link", () => {
+test("claim readiness mirrors admin_issue_assisted_claim_link: address, postal code, a visible item; no UEN", () => {
   const shop = { status: "draft" as const, category: "hawker" as const, business_uen: null, business_address: null, postal_code: null };
-  assert.deepEqual(claimReadiness(shop, []), [
-    "Pickup address",
-    "Postal code",
-    "Business UEN (needed for every category except Home Cook)",
-    "At least one menu item that isn't hidden",
-  ]);
-  assert.deepEqual(claimReadiness({ ...shop, category: "home-cook", business_address: "A", postal_code: "310123" }, [{ is_hidden: false }]), []);
-  assert.equal(claimReadiness({ ...shop, category: "home-cook", business_address: "A", postal_code: "310123" }, [{ is_hidden: true }]).length, 1);
+  assert.deepEqual(claimReadiness(shop, []), ["Pickup address", "Postal code", "At least one menu item that isn't hidden"]);
+  // A Hawker with no UEN is ready: the owner adds it after claiming (docs/supabase-assisted-uen-later.sql).
+  const ready = { ...shop, business_address: "A", postal_code: "310123" };
+  assert.deepEqual(claimReadiness(ready, [{ is_hidden: false }]), []);
+  const homeCook = { ...ready, category: "home-cook" as const };
+  assert.deepEqual(claimReadiness(homeCook, [{ is_hidden: false }]), []);
+  assert.equal(claimReadiness(ready, [{ is_hidden: true }]).length, 1);
   assert.deepEqual(claimReadiness({ ...shop, status: "claimed" }, []), ["This shop is no longer a draft."]);
+});
+
+test("the draft form: UEN optional for every category, with the after-claiming note; the draft page says so when empty", () => {
+  const form = readFileSync(new URL("../components/AssistedShopForm.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(form, /Business UEN \(needed/);
+  assert.match(form, /"Business UEN \(optional\)"/);
+  assert.match(form, /\{UEN_LATER_NOTE\}/);
+  assert.equal(
+    UEN_LATER_NOTE,
+    "Leave empty if the owner doesn't have it to hand: they add it after claiming, and the shop can't go live without it."
+  );
+  const page = readFileSync(new URL("../app/merchants/assisted/[id]/page.tsx", import.meta.url), "utf8");
+  assert.match(page, /const uenLater = shop\.category !== "home-cook" && !shop\.business_uen;/);
+  assert.match(page, /\{UEN_AFTER_CLAIM_LINE\}/);
+  assert.equal(UEN_AFTER_CLAIM_LINE, "UEN: owner adds after claiming");
+  // A typed UEN is still checked.
+  const bad = validateDraftShop({ ...DRAFT, business_uen: "12345" });
+  assert.equal(bad.ok, false);
 });
 
 // --- Draft writes ---

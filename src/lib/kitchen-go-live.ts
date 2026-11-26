@@ -4,6 +4,11 @@
  * (a_kitchen_admin_guard, unchanged) checks terms, address and menu but not
  * PayNow, so Boss checks it here before a save that turns Live on.
  *
+ * A kitchen that needs a business UEN (kitchen-uen.ts) also needs it to go
+ * live. The database refuses that itself (y_kitchen_live_needs_uen); Boss
+ * checks first only to say so in plain words. If the UEN can't be read, the
+ * save goes ahead and the database decides.
+ *
  * Reads PayNow through admin_get_kitchen_private (admins only) and keeps
  * only a yes/no: the values never leave this module. A kitchen that is
  * already live is left alone (unticking Live is always allowed), and a
@@ -12,6 +17,9 @@
  * Pure module (type-only imports) so `node --test` can load it with a fake client.
  */
 import type { AnyClient } from "./admin-guard.ts";
+import { kitchenUenStatusWith, NO_UEN_MESSAGE } from "./kitchen-uen.ts";
+
+export { NO_UEN_MESSAGE };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -52,5 +60,7 @@ export async function goLiveProblemWith(supabase: AnyClient, kitchenId: unknown,
   }
   const has = await kitchenHasPaynowWith(supabase, kitchenId);
   if (has === null) return PAYNOW_CHECK_FAILED_MESSAGE;
-  return has ? null : NO_PAYNOW_MESSAGE;
+  if (!has) return NO_PAYNOW_MESSAGE;
+  const uen = await kitchenUenStatusWith(supabase, kitchenId);
+  return uen.state === "pending" ? NO_UEN_MESSAGE : null;
 }
