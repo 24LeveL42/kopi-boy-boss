@@ -391,6 +391,26 @@ test("the screens never call the database themselves (only photo uploads to stor
   assert.match(file("components/KitchenPhotoField.tsx"), /uploadPath \? uploadPath\(file, uuid\) : hqPhotoPath\(kitchenId, file, uuid\)/);
 });
 
+test("draft menu item photos use the same upload as the shop photo: file picker, thumbnail, Replace/Remove, link fallback", () => {
+  // MenuItemsEditor hands the draft's photoPath to the same KitchenPhotoField, for both the add and the edit form.
+  const editor = file("components/MenuItemsEditor.tsx");
+  assert.match(editor, /<KitchenPhotoField kitchenId=\{kitchenId\} label="Item photo" value=\{photo\} onChange=\{setPhoto\} disabled=\{disabled\} uploadPath=\{photoPath\} \/>/);
+  assert.equal(editor.match(/<ItemFields photoPath=\{ctx\.photoPath\}/g)?.length, 2, "add and edit forms both pass the draft photo path");
+  assert.match(editor, /photo_url: photo \|\| null/, "the photo is saved with the item; Remove saves no photo");
+
+  const field = file("components/KitchenPhotoField.tsx");
+  assert.match(field, /type="file"\s+accept="image\/jpeg,image\/png,image\/webp"/);
+  assert.match(field, /<img src=\{value\}/, "thumbnail after upload");
+  assert.match(field, /"Replace photo" : "Upload photo"/);
+  assert.match(field, /onClick=\{\(\) => onChange\(""\)\}[\s\S]*Remove photo/);
+  assert.match(field, /placeholder="or paste a link: https:\/\/…"/, "the URL field still works");
+
+  // Same limits as the shop photo: one helper for both.
+  const uuid = "11111111-1111-4111-8111-111111111111";
+  assert.equal(assistedPhotoPath(SHOP, { type: "image/png", size: 5 * 1024 * 1024 }, uuid).ok, true, "5 MB is allowed");
+  assert.deepEqual(assistedPhotoPath(SHOP, { type: "image/heic", size: 1000 }, uuid), { ok: false, message: "Use a JPG, PNG or WebP photo." });
+});
+
 test("actions.ts only calls assisted-onboarding.ts for this feature, after assertAdmin()", () => {
   const actions = file("lib/actions.ts");
   for (const [name, helper] of [

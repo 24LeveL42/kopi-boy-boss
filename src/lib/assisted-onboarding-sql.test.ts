@@ -583,4 +583,50 @@ describe("HQ photo uploads (kitchen-photos/assisted/<shop_id>/)", () => {
     await as("admin", () => q("select public.admin_cancel_assisted_shop($1, 'test')", [shopId]));
     await rejects(upload("admin", `assisted/${shopId}/x.jpg`), /row-level security/);
   });
+
+  it("menu item photos: uploaded to the draft folder, saved on the item (replace, remove, link fallback), and copied into the kitchen at claim", async () => {
+    const shopId = await createDraft({ owner_mobile: "84444444" });
+    const publicUrl = (path: string) => `https://example.supabase.co/storage/v1/object/public/kitchen-photos/${path}`;
+
+    // Upload the way KitchenPhotoField does (assistedPhotoPath), then save the item with its public URL.
+    const first = `assisted/${shopId}/${crypto.randomUUID()}.jpg`;
+    const second = `assisted/${shopId}/${crypto.randomUUID()}.webp`;
+    await upload("admin", first);
+    await upload("admin", second);
+    const insertItem = (name: string, photo: string | null) =>
+      as("admin", async () =>
+        (await one<{ id: string }>("insert into public.assisted_shop_items (shop_id, name, price, photo_url) values ($1, $2, 5, $3) returning id", [shopId, name, photo])).id
+      );
+    const setPhoto = (itemId: string, photo: string) =>
+      as("admin", () => q("update public.assisted_shop_items set photo_url = $2 where id = $1", [itemId, photo]));
+    const photoOf = async (itemId: string) => (await one<{ photo_url: string | null }>("select photo_url from public.assisted_shop_items where id = $1", [itemId])).photo_url;
+
+    const uploaded = await insertItem("Uploaded photo", publicUrl(first));
+    await setPhoto(uploaded, publicUrl(second)); // Replace photo
+    assert.equal(await photoOf(uploaded), publicUrl(second));
+
+    const removed = await insertItem("Removed photo", publicUrl(first));
+    await setPhoto(removed, ""); // Remove photo sends "": stored as no photo
+    assert.equal(await photoOf(removed), null);
+
+    const linked = await insertItem("Pasted link", "  https://example.com/kopi.png  "); // the URL field still works
+    assert.equal(await photoOf(linked), "https://example.com/kopi.png");
+
+    const hiddenId = await insertItem("Hidden with photo", publicUrl(first));
+    await as("admin", () => q("update public.assisted_shop_items set is_hidden = true where id = $1", [hiddenId]));
+
+    const { hash } = await issue(shopId);
+    const owner = await newOwnerAccount(shopId, 520);
+    assert.equal((await complete(hash, owner)).status, "ok");
+
+    const menu = await q<{ name: string; photo_url: string | null }>("select name, photo_url from public.menu_items where kitchen_id = $1 order by name", [owner]);
+    assert.deepEqual(menu, [
+      { name: "Pasted link", photo_url: "https://example.com/kopi.png" },
+      { name: "Removed photo", photo_url: null },
+      { name: "Uploaded photo", photo_url: publicUrl(second) },
+    ]);
+
+    // Once claimed, the draft folder takes no more uploads.
+    await rejects(upload("admin", `assisted/${shopId}/${crypto.randomUUID()}.jpg`), /row-level security/);
+  });
 });
