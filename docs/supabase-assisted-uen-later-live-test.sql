@@ -33,6 +33,9 @@
 --   8. HQ: wrong name, no reason, bad UEN refused; a correction on the live
 --      shop works and is in kitchen_admin_audit with its reason; HQ still
 --      can't write business_uen directly (a_kitchen_admin_guard).
+--   8b. An admin's own session (authenticated, admin), with the flag on and
+--      an approved row, still can't insert a Hawker application with no UEN:
+--      the current_user condition on its own.
 --   9. anon can't call either function.
 --   10-11. Shops that exist today keep working: a live Hawker kitchen with no
 --      UEN (as approved before UENs were asked) still saves, by update and by
@@ -419,6 +422,34 @@ begin
 end;
 $$;
 
+-- ---- 8b. An admin's own session doesn't get the claim's exemption -------------
+-- Still HQ's session (role authenticated, an admin). The flag is on and the row
+-- is approved (guard_cook_application leaves an admin's status alone), and it
+-- is the admin's own row (so the insert policy passes): only the current_user
+-- condition is left to refuse it.
+do $$
+declare
+  v_msg text;
+begin
+  if current_user <> 'authenticated' or not public.user_has_role('admin') then
+    raise exception 'FAIL 8b: not an admin session (user %)', current_user;
+  end if;
+  perform set_config('kb_assist.uen_pending', 'on', true);
+  v_msg := null;
+  begin
+    insert into public.cook_applications (user_id, business_name, business_type, business_uen,
+      business_address, postal_code, status, reviewed_by, reviewed_at, privacy_policy_version)
+    values (auth.uid(), 'TEST UEN Live Test Admin Row', 'Hawker', null,
+      'Blk 6 Test Lane', '310128', 'approved', auth.uid(), now(), '2026-10-v1');
+  exception when others then v_msg := sqlerrm;
+  end;
+  perform set_config('kb_assist.uen_pending', '', true);
+  if v_msg is null or v_msg not like 'A Business Registration Number (UEN) is required%' then
+    raise exception 'FAIL 8b: an admin session inserted an approved Hawker application with no UEN (%)', coalesce(v_msg, 'it went in');
+  end if;
+end;
+$$;
+
 -- ---- 9. anon can call neither function ---------------------------------------
 select set_config('request.jwt.claims', json_build_object('role', 'anon')::text, true);
 set local role anon;
@@ -550,7 +581,7 @@ begin
     raise exception 'FAIL 12: kb_assist.uen_pending is on';
   end if;
 
-  raise exception 'TEST OK, rolled back: claim link and claim for a Hawker with no UEN (approved application, cook, not live), normal applicants still need a UEN (flag or not), owner session: no live without a UEN (Home Cook switch too), PayNow still saves, bad/empty UEN refused, UEN saved and corrected, live after, owner locked out once live, HQ correction audited with reason, HQ still refused direct writes, anon refused, existing live shops still save (update and upsert), Home Cook and no-application kitchens unaffected, terms and privacy untouched, fingerprints as pinned, flag off. Nothing was saved.';
+  raise exception 'TEST OK, rolled back: claim link and claim for a Hawker with no UEN (approved application, cook, not live), normal applicants still need a UEN (flag or not), owner session: no live without a UEN (Home Cook switch too), PayNow still saves, bad/empty UEN refused, UEN saved and corrected, live after, owner locked out once live, HQ correction audited with reason, HQ still refused direct writes, an admin session refused the no-UEN insert even with the flag, anon refused, existing live shops still save (update and upsert), Home Cook and no-application kitchens unaffected, terms and privacy untouched, fingerprints as pinned, flag off. Nothing was saved.';
 end;
 $$;
 
