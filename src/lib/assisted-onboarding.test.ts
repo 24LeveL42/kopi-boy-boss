@@ -219,6 +219,7 @@ test("toDraftItem maps a row, and refuses junk", () => {
     updated_at: SAVED,
     created_at: LOADED,
     category: null,
+    owner_note: null,
   });
   assert.equal(toDraftItem(undefined), null);
   assert.equal(toDraftItem({ name: "x" }), null);
@@ -472,6 +473,26 @@ test("the sidebar links to Assisted onboarding", () => {
 
 // --- Draft categories, CSV import, category photo ---
 
+test("draft items: owner_note is trimmed, '' clears it, at most 200, and is only saved when the form sends it", async () => {
+  assert.match(ASSISTED_ITEM_COLUMNS, /\bowner_note\b/);
+  const base = { name: "Kopi", price: "1.5", photo_url: null };
+  assert.equal((validateDraftItem({ ...base, owner_note: "  ask price " }) as { value: { owner_note: unknown } }).value.owner_note, "ask price");
+  assert.equal((validateDraftItem({ ...base, owner_note: "   " }) as { value: { owner_note: unknown } }).value.owner_note, null);
+  assert.equal((validateDraftItem({ ...base, owner_note: null }) as { value: { owner_note: unknown } }).value.owner_note, null);
+  assert.ok(!("owner_note" in (validateDraftItem(base) as { value: object }).value), "not sent = not changed");
+  assert.match((validateDraftItem({ ...base, owner_note: "n".repeat(201) }) as { message: string }).message, /at most 200/);
+  assert.equal(validateDraftItem({ ...base, owner_note: 5 }).ok, false);
+
+  const { client, calls } = fakeSupabase({ "assisted_shop_items.update": ok([itemRow({ owner_note: "ask" })]) });
+  const saved = await updateDraftItemWith(client, SHOP, ITEM, LOADED, { ...base, owner_note: " ask " });
+  assert.ok(saved.ok && saved.item.owner_note === "ask");
+  assert.equal((calls[0].values as { owner_note: unknown }).owner_note, "ask");
+  await updateDraftItemWith(client, SHOP, ITEM, LOADED, { ...base, owner_note: "" });
+  assert.equal((calls[1].values as { owner_note: unknown }).owner_note, null, "Clear note");
+  await updateDraftItemWith(client, SHOP, ITEM, LOADED, base);
+  assert.ok(!("owner_note" in (calls[2].values as object)));
+});
+
 test("draft items carry a category: trimmed, inner spaces collapsed, '' = none, at most 60; the live menu rules still apply", async () => {
   assert.match(ASSISTED_ITEM_COLUMNS, /\bcategory\b/);
   assert.deepEqual(validateDraftItem({ name: "Kopi", price: "1.5", photo_url: null, category: "  Hot   Drinks " }), {
@@ -522,9 +543,9 @@ test("CSV import: one admin_import_assisted_menu call with 2-decimal prices, cat
   assert.deepEqual(calls[0].args, {
     p_shop_id: SHOP,
     p_items: [
-      { name: "Laksa", price: "6.50", category: "Noodles", hidden: false },
-      { name: "Mee Siam", price: "5.00", category: "Noodles", hidden: true },
-      { name: "Water", price: "0.50", category: null, hidden: false },
+      { name: "Laksa", price: "6.50", category: "Noodles", hidden: false, note: null },
+      { name: "Mee Siam", price: "5.00", category: "Noodles", hidden: true, note: "ask if still sold" },
+      { name: "Water", price: "0.50", category: null, hidden: false, note: null },
     ],
     p_replace_all: false,
   });
@@ -597,8 +618,13 @@ test("the draft editor: category field, grouped headings with the category photo
   assert.match(items, /Also replace photos that are already set/);
   assert.match(items, /const \[replaceExisting, setReplaceExisting\] = useState\(false\);/, "replace is off by default");
   assert.match(items, /label="Category photo" value=\{photo\} onChange=\{setPhoto\} disabled=\{pending\} uploadPath=\{photoPath\}/, "same upload field and path as the shop photo");
-  assert.equal(items.match(/if \(ctx\.draft\) values\.category = category \|\| null;/g)?.length, 2, "add and edit send the category in drafts only");
+  assert.match(items, /if \(ctx\.draft\) values\.category = category \|\| null;/, "the add form sends the category in drafts only");
+  assert.match(items, /if \(ctx\.draft\) \{\s*values\.category = category \|\| null;\s*values\.owner_note = note\.trim\(\) \|\| null;/, "the edit form sends category and note in drafts only");
+  assert.match(items, /\{ctx\.draft && item\.owner_note && \([\s\S]*?Check with owner: \{item\.owner_note\}/, "the note shows next to the item");
+  assert.match(items, /values\.owner_note = note\.trim\(\) \|\| null;/, "the edit form saves or clears it");
+  assert.match(items, /onClick=\{\(\) => setNote\(""\)\}[\s\S]*?Clear note/);
   const imp = file("components/AssistedMenuImport.tsx");
+  assert.match(imp, /Check with owner \(saved as the note\)/);
   assert.match(imp, /accept="\.csv,text\/csv"/);
   assert.match(imp, /disabled=\{!canImport\}/);
   assert.match(imp, /const canImport = !!plan && preview!\.total > 0/, "Import is off while the preview has errors");

@@ -1,6 +1,6 @@
 -- ============================================================================
--- KOPI BOY — Assisted onboarding: draft menu categories, CSV import and
--- "Set photo for a category". Rev 1, NOT INSTALLED. Review first.
+-- KOPI BOY — Assisted onboarding: draft menu categories and owner notes,
+-- CSV import and "Set photo for a category". Rev 2, NOT INSTALLED. Review first.
 -- Live test: docs/supabase-assisted-menu-import-live-test.sql (always rolls back).
 -- PGlite test: src/lib/assisted-onboarding-sql.test.ts ("menu import").
 --
@@ -9,12 +9,21 @@
 --      spaces become one), 1-60 characters. Granted to HQ like the other
 --      item columns (select, insert, update). It stays in the DRAFT: the
 --      claim (assisted_claim_complete, unchanged) does not copy it.
+--   1b. assisted_shop_items.owner_note: nullable text, trimmed, 1-200
+--      characters: what HQ must check with the owner (the CSV's
+--      check_with_owner). Same grants as the other item columns (HQ only,
+--      through the admin-only RLS policies), draft only, NOT copied at
+--      claim and not in the claim preview. The audit never holds its text:
+--      a single-item edit logs only 'none' / 'set' for it (like the masked
+--      owner mobile), and the bulk rows hold counts only.
 --   2. admin_import_assisted_menu(shop_id, items jsonb, replace_all):
 --      the CSV import. Admin only, drafts only (claimed and cancelled shops
 --      are refused). Up to 200 rows, checked again here: name 1-80, price
 --      > 0 and <= 9999.99 with at most 2 decimals, category <= 60,
 --      no duplicate name + category in the file (case and extra spaces
---      ignored). Rows marked hidden are imported hidden. Default: skip rows
+--      ignored). Rows marked hidden are imported hidden, with their
+--      check_with_owner text (note, <= 200) saved in owner_note; a note on
+--      a visible row is refused. Default: skip rows
 --      whose name + category already exists in the draft (visible or
 --      hidden). replace_all: HIDE every visible draft item first (never
 --      deletes), then add all rows. File order is kept as display order.
@@ -104,27 +113,37 @@ alter table public.assisted_shop_items add constraint assisted_shop_items_catego
 comment on column public.assisted_shop_items.category is
   'Draft menu category (CSV import or the editor). Trimmed, 1-60 characters. Not copied to the kitchen at claim.';
 
-create or replace function public.normalize_assisted_item_category()
+alter table public.assisted_shop_items add column if not exists owner_note text;
+alter table public.assisted_shop_items drop constraint if exists assisted_shop_items_owner_note_check;
+alter table public.assisted_shop_items add constraint assisted_shop_items_owner_note_check check (
+  owner_note is null or (char_length(owner_note) between 1 and 200 and owner_note = pg_catalog.btrim(owner_note))
+);
+comment on column public.assisted_shop_items.owner_note is
+  'What HQ must check with the owner (CSV check_with_owner, or typed in the editor). Trimmed, 1-200 characters. HQ only, draft only, not copied at claim, never written to the audit.';
+
+-- One small trigger trims both draft-only fields ('' becomes null).
+create or replace function public.normalize_assisted_item_fields()
 returns trigger
 language plpgsql
 set search_path = ''
 as $$
 begin
   new.category := nullif(pg_catalog.regexp_replace(pg_catalog.btrim(coalesce(new.category, '')), '\s+', ' ', 'g'), '');
+  new.owner_note := nullif(pg_catalog.btrim(coalesce(new.owner_note, '')), '');
   return new;
 end;
 $$;
 
 -- Runs after a_assisted_shop_item_guard (triggers fire in name order).
-drop trigger if exists b_assisted_shop_item_category on public.assisted_shop_items;
-create trigger b_assisted_shop_item_category
+drop trigger if exists b_assisted_shop_item_normalize on public.assisted_shop_items;
+create trigger b_assisted_shop_item_normalize
   before insert or update on public.assisted_shop_items
-  for each row execute function public.normalize_assisted_item_category();
+  for each row execute function public.normalize_assisted_item_fields();
 
 -- Same pattern as the other item columns.
-grant select (category) on public.assisted_shop_items to authenticated;
-grant insert (category) on public.assisted_shop_items to authenticated;
-grant update (category) on public.assisted_shop_items to authenticated;
+grant select (category, owner_note) on public.assisted_shop_items to authenticated;
+grant insert (category, owner_note) on public.assisted_shop_items to authenticated;
+grant update (category, owner_note) on public.assisted_shop_items to authenticated;
 
 
 -- ----------------------------------------------------------------------------
@@ -141,7 +160,8 @@ alter table public.assisted_onboarding_audit add constraint assisted_onboarding_
 
 -- ----------------------------------------------------------------------------
 -- 3. THE PER-ITEM AUDIT TRIGGER: as in supabase-assisted-onboarding.sql,
--- plus one early return for the item rows the two bulk functions write.
+-- plus one early return for the item rows the two bulk functions write, and
+-- owner_note logged as 'none' / 'set' only (never its text).
 -- ----------------------------------------------------------------------------
 create or replace function public.audit_assisted_onboarding_row()
 returns trigger
@@ -173,6 +193,11 @@ begin
              then pg_catalog.jsonb_build_object(
                     'old', public.mask_paynow(v_old ->> 'owner_mobile'),
                     'new', public.mask_paynow(v_new ->> 'owner_mobile'))
+             -- The owner note's text never goes in the audit: only whether one is set.
+             when n.key = 'owner_note'
+             then pg_catalog.jsonb_build_object(
+                    'old', case when tg_op = 'INSERT' then null when (v_old ->> 'owner_note') is null then 'none' else 'set' end,
+                    'new', case when (v_new ->> 'owner_note') is null then 'none' else 'set' end)
              else pg_catalog.jsonb_build_object('old', v_old -> n.key, 'new', n.value)
            end), '{}'::jsonb)
     into v_changes
@@ -218,7 +243,7 @@ $$;
 
 
 -- ----------------------------------------------------------------------------
--- 4. THE CSV IMPORT. p_items: [{"name", "price", "category", "hidden"}, ...]
+-- 4. THE CSV IMPORT. p_items: [{"name", "price", "category", "hidden", "note"}, ...]
 -- in file order. Boss has already checked the file; this checks again.
 -- ----------------------------------------------------------------------------
 create or replace function public.admin_import_assisted_menu(p_shop_id uuid, p_items jsonb, p_replace_all boolean)
@@ -235,6 +260,7 @@ declare
   v_name text;
   v_price_text text;
   v_category text;
+  v_note text;
   v_key text;
   v_keys text[] := array[]::text[];
   v_existing_hidden int := 0;
@@ -298,6 +324,16 @@ begin
     if (v_row.item -> 'hidden') is not null and pg_catalog.jsonb_typeof(v_row.item -> 'hidden') <> 'boolean' then
       raise exception 'Row %: hidden must be true or false.', v_row.n using errcode = '22023';
     end if;
+    if (v_row.item -> 'note') is not null and pg_catalog.jsonb_typeof(v_row.item -> 'note') not in ('string', 'null') then
+      raise exception 'Row %: the note must be text.', v_row.n using errcode = '22023';
+    end if;
+    v_note := nullif(pg_catalog.btrim(coalesce(v_row.item ->> 'note', '')), '');
+    if pg_catalog.char_length(v_note) > 200 then
+      raise exception 'Row %: the check-with-owner note is longer than 200 characters.', v_row.n using errcode = '22023';
+    end if;
+    if v_note is not null and not coalesce((v_row.item ->> 'hidden')::boolean, false) then
+      raise exception 'Row %: a row with a check-with-owner note must be imported hidden.', v_row.n using errcode = '22023';
+    end if;
     v_key := pg_catalog.lower(pg_catalog.regexp_replace(v_name, '\s+', ' ', 'g')) || pg_catalog.chr(31) || pg_catalog.lower(coalesce(v_category, ''));
     if v_key = any (v_keys) then
       raise exception 'Row %: the same name is already in this category earlier in the file.', v_row.n using errcode = '22023';
@@ -319,7 +355,8 @@ begin
            pg_catalog.btrim(e.value ->> 'name') as name,
            (e.value ->> 'price')::numeric(6,2) as price,
            nullif(pg_catalog.regexp_replace(pg_catalog.btrim(coalesce(e.value ->> 'category', '')), '\s+', ' ', 'g'), '') as category,
-           coalesce((e.value ->> 'hidden')::boolean, false) as hidden
+           coalesce((e.value ->> 'hidden')::boolean, false) as hidden,
+           nullif(pg_catalog.btrim(coalesce(e.value ->> 'note', '')), '') as note
     from pg_catalog.jsonb_array_elements(p_items) with ordinality as e
   ),
   fresh as (
@@ -335,8 +372,8 @@ begin
   ),
   added as (
     -- created_at a microsecond apart keeps the file order (the editor sorts by it).
-    insert into public.assisted_shop_items (shop_id, name, price, photo_url, category, is_hidden, created_at, updated_at)
-    select p_shop_id, f.name, f.price, null, f.category, f.hidden,
+    insert into public.assisted_shop_items (shop_id, name, price, photo_url, category, owner_note, is_hidden, created_at, updated_at)
+    select p_shop_id, f.name, f.price, null, f.category, f.note, f.hidden,
            pg_catalog.now() + f.n * interval '1 microsecond', pg_catalog.now()
     from fresh f
     order by f.n
@@ -424,7 +461,7 @@ end;
 $$;
 
 -- Same pattern as the other admin_* functions.
-revoke all on function public.normalize_assisted_item_category() from public, anon, authenticated, service_role;
+revoke all on function public.normalize_assisted_item_fields() from public, anon, authenticated, service_role;
 revoke all on function public.audit_assisted_onboarding_row() from public, anon, authenticated, service_role;
 revoke all on function public.admin_import_assisted_menu(uuid, jsonb, boolean) from public, anon, authenticated, service_role;
 revoke all on function public.admin_set_assisted_category_photo(uuid, text, text, boolean) from public, anon, authenticated, service_role;
@@ -463,6 +500,25 @@ begin
   if not exists (select 1 from pg_constraint where conname = 'assisted_shop_items_category_check') then
     raise exception 'Stopped: the category check is missing';
   end if;
+  if not exists (select 1 from information_schema.columns
+                 where table_schema = 'public' and table_name = 'assisted_shop_items' and column_name = 'owner_note'
+                   and data_type = 'text' and is_nullable = 'YES')
+     or not exists (select 1 from pg_constraint where conname = 'assisted_shop_items_owner_note_check') then
+    raise exception 'Stopped: assisted_shop_items.owner_note or its check is missing';
+  end if;
+  if not (has_column_privilege('authenticated', 'public.assisted_shop_items', 'owner_note', 'select')
+          and has_column_privilege('authenticated', 'public.assisted_shop_items', 'owner_note', 'insert')
+          and has_column_privilege('authenticated', 'public.assisted_shop_items', 'owner_note', 'update'))
+     or has_column_privilege('anon', 'public.assisted_shop_items', 'owner_note', 'select')
+     or has_column_privilege('service_role', 'public.assisted_shop_items', 'owner_note', 'select') then
+    raise exception 'Stopped: owner_note grants are wrong';
+  end if;
+  -- Not copied at claim and not in the claim preview (both functions unchanged).
+  if exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+             where n.nspname = 'public' and p.proname in ('assisted_claim_complete', 'assisted_claim_preview')
+               and p.prosrc like '%owner_note%') then
+    raise exception 'Stopped: a claim function mentions owner_note';
+  end if;
   if not (has_column_privilege('authenticated', 'public.assisted_shop_items', 'category', 'select')
           and has_column_privilege('authenticated', 'public.assisted_shop_items', 'category', 'insert')
           and has_column_privilege('authenticated', 'public.assisted_shop_items', 'category', 'update'))
@@ -479,13 +535,18 @@ begin
                  where n.nspname = 'public' and p.proname = 'audit_assisted_onboarding_row' and p.prosrc like '%kb_assist.bulk%') then
     raise exception 'Stopped: the audit trigger does not skip the bulk rows';
   end if;
+  if not exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+                 where n.nspname = 'public' and p.proname = 'audit_assisted_onboarding_row'
+                   and p.prosrc like '%n.key = ''owner_note''%') then
+    raise exception 'Stopped: the audit trigger does not hide the owner note';
+  end if;
 
   -- Fixed, empty search_path; only signed-in users (the functions check admin) run the two admin functions.
   select string_agg(p.proname, ', ') into v_bad
   from pg_proc p join pg_namespace n on n.oid = p.pronamespace
   where n.nspname = 'public'
     and p.proname in ('admin_import_assisted_menu', 'admin_set_assisted_category_photo',
-                      'audit_assisted_onboarding_row', 'normalize_assisted_item_category')
+                      'audit_assisted_onboarding_row', 'normalize_assisted_item_fields')
     and not coalesce('search_path=""' = any (p.proconfig), false);
   if v_bad is not null then
     raise exception 'Stopped: function(s) without search_path = '''': %', v_bad;

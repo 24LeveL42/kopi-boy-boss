@@ -103,7 +103,7 @@ export function AssistedMenuImport({
       </h3>
       <p className="text-xs" style={{ color: "var(--oc-text-soft)" }}>
         First row: <span className="font-mono">category,name,price,check_with_owner</span> (any order; name and price are required). Up to{" "}
-        {CSV_MAX_ROWS} items. Rows with something in check_with_owner are imported hidden. Nothing is saved until you press Import.
+        {CSV_MAX_ROWS} items. Rows with something in check_with_owner are imported hidden, with that text saved as a note for HQ (never copied to the shop). Nothing is saved until you press Import.
       </p>
       <div className="flex flex-wrap items-center gap-2">
         <label
@@ -224,7 +224,7 @@ function ImportPreview({ preview }: { preview: ReturnType<typeof previewCsv> }) 
                   <th className="px-2 py-1">Row</th>
                   <th className="px-2 py-1">Name</th>
                   <th className="px-2 py-1 text-right">Price</th>
-                  <th className="px-2 py-1">Check with owner</th>
+                  <th className="px-2 py-1">Check with owner (saved as the note)</th>
                 </tr>
               </thead>
               {preview.categories.map((c) => (

@@ -34,4 +34,6 @@ export interface MenuItem {
   created_at: string;
   /** Assisted-onboarding drafts only (assisted_shop_items.category); live menu_items have none. */
   category?: string | null;
+  /** Assisted-onboarding drafts only: what HQ must check with the owner. HQ only, never copied at claim. */
+  owner_note?: string | null;
 }

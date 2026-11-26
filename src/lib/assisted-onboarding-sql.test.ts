@@ -641,7 +641,7 @@ describe("HQ photo uploads (kitchen-photos/assisted/<shop_id>/)", () => {
  * docs/supabase-assisted-menu-import.sql: draft categories, the CSV import
  * and "Set photo for a category". Installed (twice) by the before() hook above.
  */
-type ImportItem = { name: string; price: string; category?: string | null; hidden?: boolean };
+type ImportItem = { name: string; price: string; category?: string | null; hidden?: boolean; note?: string | null };
 type ImportCounts = { imported: number; hidden: number; skipped: number; existing_hidden: number; replace_all: boolean };
 
 const importMenu = (shopId: string, items: ImportItem[], replaceAll = false, who: Who = "admin") =>
@@ -728,7 +728,7 @@ describe("menu import — install", () => {
   it("re-running changes nothing (functions, triggers, constraints, grants, data)", async () => {
     const fresh = await freshStack(true);
     const snap = async () => ({
-      fns: (await fresh.query("select proname, prosrc, prosecdef, proconfig, proacl::text from pg_proc where proname in ('admin_import_assisted_menu', 'admin_set_assisted_category_photo', 'audit_assisted_onboarding_row', 'normalize_assisted_item_category') order by proname")).rows,
+      fns: (await fresh.query("select proname, prosrc, prosecdef, proconfig, proacl::text from pg_proc where proname in ('admin_import_assisted_menu', 'admin_set_assisted_category_photo', 'audit_assisted_onboarding_row', 'normalize_assisted_item_fields') order by proname")).rows,
       trg: (await fresh.query("select tgname, pg_get_triggerdef(oid) as d from pg_trigger where tgrelid = 'public.assisted_shop_items'::regclass and not tgisinternal order by tgname")).rows,
       con: (await fresh.query("select conname, pg_get_constraintdef(oid) as d from pg_constraint where conname in ('assisted_shop_items_category_check', 'assisted_onboarding_audit_action_check') order by conname")).rows,
       acl: (await fresh.query("select attname, attacl::text from pg_attribute where attrelid = 'public.assisted_shop_items'::regclass and attnum > 0 and not attisdropped order by attnum")).rows,
@@ -856,6 +856,98 @@ describe("menu import — admin_import_assisted_menu", () => {
     assert.equal((await complete(hash, await newOwnerAccount(claimed, 530))).status, "ok");
     await rejects(importMenu(claimed, row), /already been claimed or cancelled/);
     await rejects(categoryPhoto(claimed, null, "https://example.com/x.jpg"), /already been claimed or cancelled/);
+  });
+});
+
+describe("menu import — owner_note (HQ only, draft only, never in the audit)", () => {
+  const notes = (shopId: string) =>
+    q<{ name: string; owner_note: string | null; is_hidden: boolean }>(
+      "select name, owner_note, is_hidden from public.assisted_shop_items where shop_id = $1 order by created_at, id",
+      [shopId]
+    );
+  const auditText = async (shopId: string) =>
+    (await q<{ t: string }>("select details::text as t from public.assisted_onboarding_audit where shop_id = $1", [shopId])).map((r) => r.t).join(" ");
+
+  it("the column: trimmed, '' clears it, over 200 refused; granted to signed-in users like the other columns, nothing for anon or service_role", async () => {
+    const shopId = await menuDraft();
+    const itemId = await as("admin", async () =>
+      (await one<{ id: string }>("insert into public.assisted_shop_items (shop_id, name, price, owner_note) values ($1, 'Kopi', 1.5, '  ask price  ') returning id", [shopId])).id
+    );
+    assert.equal((await notes(shopId))[0].owner_note, "ask price");
+    await as("admin", () => q("update public.assisted_shop_items set owner_note = '   ' where id = $1", [itemId]));
+    assert.equal((await notes(shopId))[0].owner_note, null);
+    await rejects(as("admin", () => q("update public.assisted_shop_items set owner_note = $2 where id = $1", [itemId, "n".repeat(201)])), /assisted_shop_items_owner_note_check/);
+    await as("admin", () => q("update public.assisted_shop_items set owner_note = $2 where id = $1", [itemId, "n".repeat(200)]));
+    const priv = await one<Record<string, boolean>>(`select
+      has_column_privilege('authenticated', 'public.assisted_shop_items', 'owner_note', 'select') as auth_select,
+      has_column_privilege('authenticated', 'public.assisted_shop_items', 'owner_note', 'update') as auth_update,
+      has_column_privilege('anon', 'public.assisted_shop_items', 'owner_note', 'select') as anon_select,
+      has_column_privilege('service_role', 'public.assisted_shop_items', 'owner_note', 'select') as service_select`);
+    assert.deepEqual(priv, { auth_select: true, auth_update: true, anon_select: false, service_select: false });
+    // RLS: only admins see draft items at all, so a customer never reads a note.
+    assert.deepEqual(await as("customer", () => q("select owner_note from public.assisted_shop_items where shop_id = $1", [shopId])), []);
+  });
+
+  it("the import saves check_with_owner as the note on the hidden rows; a note on a visible row or over 200 is refused", async () => {
+    const shopId = await menuDraft();
+    await importMenu(shopId, [
+      { name: "Kaya Toast", price: "2", category: "Breakfast" },
+      { name: "Eggs", price: "1.6", category: "Breakfast", hidden: true, note: "  Ask if half-boiled or soft  " },
+    ]);
+    assert.deepEqual(await notes(shopId), [
+      { name: "Kaya Toast", owner_note: null, is_hidden: false },
+      { name: "Eggs", owner_note: "Ask if half-boiled or soft", is_hidden: true },
+    ]);
+    assert.doesNotMatch(await auditText(shopId), /half-boiled/, "the summary row has counts only");
+    await rejects(importMenu(shopId, [{ name: "Milo", price: "2", note: "check" }]), /Row 1: a row with a check-with-owner note must be imported hidden/);
+    await rejects(importMenu(shopId, [{ name: "Milo", price: "2", hidden: true, note: "n".repeat(201) }]), /Row 1: the check-with-owner note is longer than 200/);
+    await rejects(
+      as("admin", () => q("select public.admin_import_assisted_menu($1, $2::jsonb, false)", [shopId, JSON.stringify([{ name: "Milo", price: "2", hidden: true, note: 5 }])])),
+      /Row 1: the note must be text/
+    );
+  });
+
+  it("HQ editing or clearing a note is audited as 'none' / 'set' only, never the text", async () => {
+    const shopId = await menuDraft();
+    await importMenu(shopId, [{ name: "Laksa", price: "6", hidden: true, note: "secret supplier question" }]);
+    const [{ id: itemId }] = await q<{ id: string }>("select id from public.assisted_shop_items where shop_id = $1", [shopId]);
+    await as("admin", () => q("update public.assisted_shop_items set owner_note = 'another private question' where id = $1", [itemId]));
+    await as("admin", () => q("update public.assisted_shop_items set owner_note = null, price = 6.5 where id = $1", [itemId]));
+    const rows = await auditDetails(shopId, "item_updated");
+    assert.deepEqual(
+      rows.map((r) => (r.details.changes as Record<string, unknown>).owner_note),
+      [
+        { old: "set", new: "set" },
+        { old: "set", new: "none" },
+      ],
+      "an edited note is logged as edited (set -> set), a cleared one as set -> none; never the text"
+    );
+    const added = await as("admin", async () =>
+      (await one<{ id: string }>("insert into public.assisted_shop_items (shop_id, name, price, owner_note) values ($1, 'Mee', 5, 'typed by HQ') returning id", [shopId])).id
+    );
+    const [addedRow] = (await auditDetails(shopId, "item_added")).filter((r) => r.details.item_id === added);
+    assert.deepEqual((addedRow.details.changes as Record<string, unknown>).owner_note, { old: null, new: "set" });
+    assert.doesNotMatch(await auditText(shopId), /secret|private|typed by HQ/);
+  });
+
+  it("not in the claim preview and not copied at claim (claim functions unchanged)", async () => {
+    const shopId = await menuDraft();
+    await importMenu(shopId, [
+      { name: "Kaya Toast", price: "2", category: "Breakfast" },
+      { name: "Eggs", price: "1.6", hidden: true, note: "ask the owner first" },
+    ]);
+    await as("admin", () => q("update public.assisted_shop_items set owner_note = 'visible item note' where shop_id = $1 and name = 'Kaya Toast'", [shopId]));
+    const { hash } = await issue(shopId);
+    const shown = await preview(hash);
+    assert.doesNotMatch(JSON.stringify(shown), /owner_note|visible item note|ask the owner first/);
+    const owner = await newOwnerAccount(shopId, 532);
+    assert.equal((await complete(hash, owner)).status, "ok");
+    assert.deepEqual(await q("select name from public.menu_items where kitchen_id = $1", [owner]), [{ name: "Kaya Toast" }]);
+    assert.equal((await one<{ n: number }>("select count(*)::int as n from information_schema.columns where table_name = 'menu_items' and column_name = 'owner_note'")).n, 0);
+    assert.equal(
+      (await one<{ n: number }>("select count(*)::int as n from pg_proc where proname in ('assisted_claim_complete', 'assisted_claim_preview') and prosrc like '%owner_note%'")).n,
+      0
+    );
   });
 });
 

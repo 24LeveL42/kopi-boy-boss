@@ -123,6 +123,9 @@ test("a filled check_with_owner imports the row hidden and keeps the note for th
     ]
   );
   assert.equal(p.hidden, 1);
+  const long = previewCsv(`name,price,check_with_owner\nKopi,1.5,${"n".repeat(201)}\nTeh,1.6,${"n".repeat(200)}`);
+  assert.deepEqual(long.errors.map((e) => [e.row, e.message]), [[2, "The check_with_owner note is longer than 200 characters."]]);
+  assert.equal(long.rows[0].note?.length, 200);
 });
 
 // --- Preview numbers ---

@@ -14,18 +14,23 @@
 --
 -- What it proves (signed in as HQ, through the real functions):
 --   1. The category is trimmed (inner spaces collapsed); over 60 is refused.
---   2. Import: hidden rows, categories and file order kept; ONE
---      'menu_imported' audit row with counts only and NO item_added rows.
+--      The owner note is trimmed; over 200 is refused.
+--   2. Import: hidden rows, categories and file order kept; the
+--      check_with_owner text saved as the hidden row's owner note; ONE
+--      'menu_imported' audit row with counts only (no menu or note text)
+--      and NO item_added rows.
 --   3. Import again: rows already in the draft (visible or hidden, case and
 --      extra spaces ignored) are skipped and counted.
 --   4. Bad rows are refused and nothing is written: a bad price, a duplicate
---      in the file.
+--      in the file, a note on a visible row.
 --   5. Replace all: every visible item is hidden (none deleted), the file is
 --      added in full.
 --   6. Category photo: only items with no photo (hidden ones too), then with
 --      replace; other categories untouched; ONE 'category_photo_set' row
 --      and NO item_updated rows.
---   7. An ordinary single-item edit is still audited one row per item.
+--   7. An ordinary single-item edit is still audited one row per item;
+--      editing or clearing a note logs only 'set' / 'none', never the text,
+--      and nothing in this draft's audit holds a note.
 --   8. A cancelled draft refuses both functions. (A claimed draft hits the
 --      same check; the PGlite test claims one for real.)
 -- ============================================================================
@@ -80,11 +85,24 @@ begin
     raise exception 'FAIL 1: a 61-character category was accepted';
   exception when check_violation then null;
   end;
+  update public.assisted_shop_items set owner_note = '  KB live test: trim me  ' where id = v_item;
+  if (select owner_note from public.assisted_shop_items where id = v_item) <> 'KB live test: trim me' then
+    raise exception 'FAIL 1: owner_note not trimmed';
+  end if;
+  begin
+    update public.assisted_shop_items set owner_note = repeat('n', 201) where id = v_item;
+    raise exception 'FAIL 1: a 201-character note was accepted';
+  exception when check_violation then null;
+  end;
+  update public.assisted_shop_items set owner_note = '' where id = v_item;
+  if (select owner_note from public.assisted_shop_items where id = v_item) is not null then
+    raise exception 'FAIL 1: an empty note did not clear it';
+  end if;
 
   -- 2. Import: three rows, one hidden (check_with_owner filled in Boss).
   v_counts := public.admin_import_assisted_menu(v_shop, '[
     {"name": "Kaya Toast", "price": "2.20", "category": "Breakfast", "hidden": false},
-    {"name": "Teh Tarik", "price": "1.80", "category": "hot drinks", "hidden": true},
+    {"name": "Teh Tarik", "price": "1.80", "category": "hot drinks", "hidden": true, "note": "KB live test note: still sold?"},
     {"name": "Soft-boiled Eggs", "price": "1.60", "category": "Breakfast", "hidden": false}
   ]'::jsonb, false);
   if v_counts ->> 'imported' <> '3' or v_counts ->> 'hidden' <> '1' or v_counts ->> 'skipped' <> '0' then
@@ -94,6 +112,10 @@ begin
   from public.assisted_shop_items where shop_id = v_shop and name <> 'Kopi O';
   if v_names <> 'Kaya Toast:Breakfast:false, Teh Tarik:hot drinks:true, Soft-boiled Eggs:Breakfast:false' then
     raise exception 'FAIL 2: rows or order wrong: %', v_names;
+  end if;
+  if (select owner_note from public.assisted_shop_items where shop_id = v_shop and name = 'Teh Tarik') is distinct from 'KB live test note: still sold?'
+     or exists (select 1 from public.assisted_shop_items where shop_id = v_shop and name <> 'Teh Tarik' and owner_note is not null) then
+    raise exception 'FAIL 2: the note was not saved on the hidden row only';
   end if;
   select count(*) into v_n from public.assisted_onboarding_audit where shop_id = v_shop and action = 'menu_imported';
   if v_n <> 1 then raise exception 'FAIL 2: % menu_imported rows', v_n; end if;
@@ -128,6 +150,12 @@ begin
   exception when invalid_parameter_value then v_msg := sqlerrm;
   end;
   if v_msg is null or v_msg not like 'Row 2:%' then raise exception 'FAIL 4: duplicate not refused (%)', coalesce(v_msg, 'no error'); end if;
+  v_msg := null;
+  begin
+    perform public.admin_import_assisted_menu(v_shop, '[{"name": "Rojak", "price": "4", "note": "check"}]'::jsonb, false);
+  exception when invalid_parameter_value then v_msg := sqlerrm;
+  end;
+  if v_msg is null or v_msg not like 'Row 1:%hidden%' then raise exception 'FAIL 4: a note on a visible row was not refused (%)', coalesce(v_msg, 'no error'); end if;
   if (select count(*) from public.assisted_shop_items where shop_id = v_shop) <> v_n then
     raise exception 'FAIL 4: a refused import wrote rows';
   end if;
@@ -146,10 +174,11 @@ begin
   end if;
 
   -- 6. Category photo: Breakfast has 3 items (two hidden now), none with a photo.
+  -- (Step 1 wrote 2 item_updated rows for Kopi O's note: set, then cleared.)
   update public.assisted_shop_items set photo_url = 'https://example.com/own.jpg'
   where shop_id = v_shop and name = 'Soft-boiled Eggs';
   select count(*) into v_n from public.assisted_onboarding_audit where shop_id = v_shop and action = 'item_updated';
-  if v_n <> 1 then raise exception 'FAIL 7: a single edit was not audited (% item_updated rows)', v_n; end if;
+  if v_n <> 3 then raise exception 'FAIL 7: a single edit was not audited (% item_updated rows, 3 expected)', v_n; end if;
 
   if public.admin_set_assisted_category_photo(v_shop, ' breakfast ', 'https://example.com/breakfast.jpg', false) <> 2 then
     raise exception 'FAIL 6: expected 2 items without a photo updated';
@@ -166,7 +195,7 @@ begin
   select count(*) into v_n from public.assisted_onboarding_audit where shop_id = v_shop and action = 'category_photo_set';
   if v_n <> 2 then raise exception 'FAIL 6: % category_photo_set rows (2 expected)', v_n; end if;
   select count(*) into v_n from public.assisted_onboarding_audit where shop_id = v_shop and action = 'item_updated';
-  if v_n <> 1 then raise exception 'FAIL 6: the category photo wrote item_updated rows'; end if;
+  if v_n <> 3 then raise exception 'FAIL 6: the category photo wrote item_updated rows'; end if;
   begin
     perform public.admin_set_assisted_category_photo(v_shop, 'Breakfast', 'javascript:alert(1)', false);
     raise exception 'FAIL 6: a bad link was accepted';
@@ -175,6 +204,24 @@ begin
 
   if coalesce(current_setting('kb_assist.bulk', true), '') = 'on' then
     raise exception 'FAIL: kb_assist.bulk was left on';
+  end if;
+
+  -- 7b. HQ edits the imported note, then clears it: logged as set / none only.
+  update public.assisted_shop_items set owner_note = 'KB live test note: ask about price'
+  where shop_id = v_shop and name = 'Teh Tarik';
+  update public.assisted_shop_items set owner_note = null
+  where shop_id = v_shop and name = 'Teh Tarik';
+  if (select owner_note from public.assisted_shop_items where shop_id = v_shop and name = 'Teh Tarik') is not null then
+    raise exception 'FAIL 7: the note was not cleared';
+  end if;
+  select string_agg(details -> 'changes' ->> 'owner_note', ' | ' order by id) into v_names
+  from public.assisted_onboarding_audit
+  where shop_id = v_shop and action = 'item_updated' and details -> 'changes' ? 'owner_note';
+  if v_names <> '{"new": "set", "old": "none"} | {"new": "none", "old": "set"} | {"new": "set", "old": "set"} | {"new": "none", "old": "set"}' then
+    raise exception 'FAIL 7: note edits not logged as set / none: %', v_names;
+  end if;
+  if exists (select 1 from public.assisted_onboarding_audit where shop_id = v_shop and details::text like '%KB live test%') then
+    raise exception 'FAIL 7: a note''s text reached the audit';
   end if;
 
   -- 8. Cancelled: both refused.
@@ -190,7 +237,7 @@ begin
   exception when insufficient_privilege then null;
   end;
 
-  raise exception 'TEST OK, rolled back: category trimmed and capped, import kept order and hidden rows with one summary audit row, duplicates skipped, bad rows refused, replace all hid without deleting, category photo filled only empty photos (hidden too) with one summary row, single edits still audited, cancelled draft refused. Nothing was saved.';
+  raise exception 'TEST OK, rolled back: category and owner note trimmed and capped, import kept order and hidden rows with their notes and one summary audit row, duplicates skipped, bad rows refused, replace all hid without deleting, category photo filled only empty photos (hidden too) with one summary row, single edits still audited, notes never in the audit, cancelled draft refused. Nothing was saved.';
 end;
 $$;
 

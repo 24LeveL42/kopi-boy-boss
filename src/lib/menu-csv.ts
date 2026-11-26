@@ -15,6 +15,8 @@ import { ITEM_NAME_MAX, validateMenuItem } from "./kitchen-admin.ts";
 export const CSV_MAX_ROWS = 200;
 export const CSV_MAX_CHARS = 200_000;
 export const CATEGORY_MAX = 60;
+/** assisted_shop_items.owner_note: the check_with_owner text. */
+export const NOTE_MAX = 200;
 export const CSV_COLUMNS = ["category", "name", "price", "check_with_owner"] as const;
 type Column = (typeof CSV_COLUMNS)[number];
 
@@ -26,7 +28,7 @@ export type CsvRow = {
   price: number;
   /** check_with_owner was filled in: imported hidden. */
   hidden: boolean;
-  /** The check_with_owner text (shown in the preview; there is no notes field to save it in). */
+  /** The check_with_owner text: saved as the item's owner note (HQ only, not copied at claim). */
   note: string | null;
 };
 export type CsvError = { row: number | null; message: string };
@@ -156,6 +158,7 @@ export function previewCsv(text: string): CsvPreview {
     const note = cell(cells, "check_with_owner").trim() || null;
 
     if (category && category.length > CATEGORY_MAX) rowErrors.push(`The category is longer than ${CATEGORY_MAX} characters.`);
+    if (note && note.length > NOTE_MAX) rowErrors.push(`The check_with_owner note is longer than ${NOTE_MAX} characters.`);
     let price = NaN;
     if (!rawPrice) rowErrors.push("The price is empty.");
     else if (!PRICE_RE.test(rawPrice)) rowErrors.push(`"${rawPrice}" isn't a valid price: use a positive number with at most 2 decimals, like 4.50.`);

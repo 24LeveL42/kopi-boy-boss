@@ -26,7 +26,7 @@
 import type { AnyClient } from "./admin-guard.ts";
 import type { CuisineType, MenuItem, MerchantCategory } from "./types-kitchen.ts";
 import { MERCHANT_CATEGORIES, optionalUrl, PHOTO_MAX_BYTES, validateKitchenProfile, validateMenuItem, type MenuItemFields } from "./kitchen-admin.ts";
-import { CATEGORY_MAX, cleanCategory, previewCsv, type CsvError, type ImportMode } from "./menu-csv.ts";
+import { CATEGORY_MAX, cleanCategory, NOTE_MAX, previewCsv, type CsvError, type ImportMode } from "./menu-csv.ts";
 
 // --- Types and column lists ---
 
@@ -97,7 +97,7 @@ export const ASSISTED_SHOP_COLUMNS =
   "id, status, business_name, category, cuisine_type, is_halal, description, hero_image, owner_name, owner_mobile, business_uen, business_address, postal_code, pricing_plan, created_by, created_at, updated_at, cancelled_at, claimed_user_id, claimed_at, acknowledged_at";
 
 /** Draft menu items; read as MenuItem-shaped rows (kitchen_id = the shop id) by toDraftItem. */
-export const ASSISTED_ITEM_COLUMNS = "id, shop_id, name, price, photo_url, category, is_hidden, created_at, updated_at";
+export const ASSISTED_ITEM_COLUMNS = "id, shop_id, name, price, photo_url, category, owner_note, is_hidden, created_at, updated_at";
 
 export const ASSISTED_AUDIT_COLUMNS = "id, created_at, actor_id, actor_kind, shop_id, shop_name, token_id, kitchen_id, action, details";
 
@@ -422,18 +422,30 @@ export function toDraftItem(row: Row | undefined): MenuItem | null {
     updated_at: String(row.updated_at),
     created_at: String(row.created_at),
     category: typeof row.category === "string" ? row.category : null,
+    owner_note: typeof row.owner_note === "string" ? row.owner_note : null,
   };
 }
 
-/** The editor's item rules plus the draft category (trimmed, at most 60 characters, '' = none). */
-export function validateDraftItem(input: unknown): Checked<MenuItemFields & { category: string | null }> {
+/**
+ * The editor's item rules plus the draft-only fields: category (trimmed, at
+ * most 60, '' = none) and owner_note (trimmed, at most 200, '' = cleared).
+ * owner_note is only in the result when the input has it, so a save that
+ * doesn't send it never clears it.
+ */
+export function validateDraftItem(
+  input: unknown
+): Checked<MenuItemFields & { category: string | null; owner_note?: string | null }> {
   const checked = validateMenuItem(input);
   if (!checked.ok) return checked;
-  const raw = (input as { category?: unknown } | null)?.category;
-  if (raw !== undefined && raw !== null && typeof raw !== "string") return { ok: false, message: "The category must be text." };
-  const category = cleanCategory(raw ?? null);
+  const p = (input ?? {}) as { category?: unknown; owner_note?: unknown };
+  if (p.category !== undefined && p.category !== null && typeof p.category !== "string") return { ok: false, message: "The category must be text." };
+  const category = cleanCategory((p.category as string | null | undefined) ?? null);
   if (category && category.length > CATEGORY_MAX) return { ok: false, message: `The category can be at most ${CATEGORY_MAX} characters.` };
-  return { ok: true, value: { ...checked.value, category } };
+  if (!("owner_note" in p)) return { ok: true, value: { ...checked.value, category } };
+  if (p.owner_note !== null && typeof p.owner_note !== "string") return { ok: false, message: "The note must be text." };
+  const owner_note = (p.owner_note ?? "").trim() || null;
+  if (owner_note && owner_note.length > NOTE_MAX) return { ok: false, message: `The check-with-owner note can be at most ${NOTE_MAX} characters.` };
+  return { ok: true, value: { ...checked.value, category, owner_note } };
 }
 
 /** Adds a visible draft item: INSERT assisted_shop_items (shop_id, name, price, photo_url, category). */
@@ -461,7 +473,7 @@ async function updateDraftItem(
   shopId: unknown,
   itemId: unknown,
   loadedUpdatedAt: unknown,
-  values: { name?: string; price?: number; photo_url?: string | null; category?: string | null; is_hidden?: boolean }
+  values: { name?: string; price?: number; photo_url?: string | null; category?: string | null; owner_note?: string | null; is_hidden?: boolean }
 ): Promise<DraftItemResult> {
   const bad = checkIds(shopId, itemId) ?? checkStamp(loadedUpdatedAt);
   if (bad) return { ok: false, message: bad };
@@ -530,7 +542,8 @@ const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : N
 /**
  * Imports a CSV into a draft. The text is checked again here with the same
  * rules as the browser preview (previewCsv); any row error refuses the whole
- * file. Then ONE call to admin_import_assisted_menu, which re-checks admin,
+ * file. Rows with check_with_owner go hidden, with that text as their owner
+ * note. Then ONE call to admin_import_assisted_menu, which re-checks admin,
  * draft and every row, skips (or, with "replace", first hides) and writes one
  * summary audit row. Price goes as "4.50" text, exactly 2 decimals.
  */
@@ -543,7 +556,8 @@ export async function importDraftMenuWith(supabase: AnyClient, shopId: unknown, 
   if (preview.errors.length) {
     return { ok: false, message: `Not imported: fix the ${preview.errors.length === 1 ? "error" : `${preview.errors.length} errors`} in the file first.`, errors: preview.errors };
   }
-  const items = preview.rows.map((r) => ({ name: r.name, price: r.price.toFixed(2), category: r.category, hidden: r.hidden }));
+  // check_with_owner rows: hidden, with their text as the owner note.
+  const items = preview.rows.map((r) => ({ name: r.name, price: r.price.toFixed(2), category: r.category, hidden: r.hidden, note: r.note }));
   try {
     const { data, error } = await supabase.rpc("admin_import_assisted_menu", {
       p_shop_id: shopId,

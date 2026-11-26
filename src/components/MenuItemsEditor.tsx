@@ -5,7 +5,7 @@ import { addMenuItem, setMenuItemHidden, updateMenuItem } from "@/lib/actions";
 import type { MenuItemInput, MenuItemResult } from "@/lib/kitchen-admin";
 import type { MenuItem } from "@/lib/types-kitchen";
 import { categoryGroups, categoryLabel, categoryPhotoButtonLabel, categoryPhotoNotice, categoryPhotoTargets, type CategoryGroup } from "@/lib/draft-menu";
-import { CATEGORY_MAX } from "@/lib/menu-csv";
+import { CATEGORY_MAX, NOTE_MAX } from "@/lib/menu-csv";
 import type { CategoryPhotoResult } from "@/lib/assisted-onboarding";
 import { KitchenPhotoField } from "./KitchenPhotoField";
 import { Spinner } from "./Spinner";
@@ -276,6 +276,11 @@ function ItemRow({
           <p className="text-sm" style={{ color: "var(--oc-text-soft)" }}>
             {money(item.price)}
           </p>
+          {ctx.draft && item.owner_note && (
+            <p className="mt-0.5 text-xs" style={{ color: "var(--oc-amber-fg)" }}>
+              Check with owner: {item.owner_note}
+            </p>
+          )}
         </div>
         <button
           type="button"
@@ -316,6 +321,8 @@ function ItemFields({
   category,
   setCategory,
   categories,
+  note,
+  setNote,
 }: {
   photoPath?: PhotoPath;
   kitchenId: string;
@@ -330,6 +337,9 @@ function ItemFields({
   category?: string;
   setCategory?: (v: string) => void;
   categories?: string[];
+  /** Drafts only: shown when setNote is passed. */
+  note?: string;
+  setNote?: (v: string) => void;
 }) {
   const inputStyle = { borderColor: "var(--oc-line)", background: "var(--oc-card)", color: "var(--oc-text)" };
   const listId = useId();
@@ -381,6 +391,33 @@ function ItemFields({
         </label>
       </div>
       <KitchenPhotoField kitchenId={kitchenId} label="Item photo" value={photo} onChange={setPhoto} disabled={disabled} uploadPath={photoPath} />
+      {setNote && (
+        <label className="block text-xs font-medium" style={{ color: "var(--oc-text-soft)" }}>
+          Check with owner (HQ only, not copied to the shop)
+          <div className="mt-1 flex gap-2">
+            <input
+              value={note ?? ""}
+              onChange={(e) => setNote(e.target.value)}
+              maxLength={NOTE_MAX}
+              placeholder="e.g. Is this still on the menu?"
+              disabled={disabled}
+              className="w-full rounded-lg border px-3 py-2 text-sm"
+              style={inputStyle}
+            />
+            {note && (
+              <button
+                type="button"
+                onClick={() => setNote("")}
+                disabled={disabled}
+                className="shrink-0 text-sm underline disabled:opacity-50"
+                style={{ color: "var(--oc-text-soft)" }}
+              >
+                Clear note
+              </button>
+            )}
+          </div>
+        </label>
+      )}
     </div>
   );
 }
@@ -400,12 +437,16 @@ function EditItemForm({
   const [price, setPrice] = useState(Number(item.price).toFixed(2));
   const [photo, setPhoto] = useState(item.photo_url ?? "");
   const [category, setCategory] = useState(item.category ?? "");
+  const [note, setNote] = useState(item.owner_note ?? "");
   const { pending, error, stale, run } = useItemAction();
 
   function save(e: React.FormEvent) {
     e.preventDefault();
     const values: MenuItemInput = { name, price, photo_url: photo || null };
-    if (ctx.draft) values.category = category || null;
+    if (ctx.draft) {
+      values.category = category || null;
+      values.owner_note = note.trim() || null;
+    }
     run(() => ctx.actions.update(kitchenId, item.id, item.updated_at, values), onDone);
   }
 
@@ -421,7 +462,7 @@ function EditItemForm({
         setPrice={setPrice}
         setPhoto={setPhoto}
         disabled={pending}
-        {...(ctx.draft ? { category, setCategory, categories: ctx.categories } : {})}
+        {...(ctx.draft ? { category, setCategory, categories: ctx.categories, note, setNote } : {})}
       />
       <ItemError error={error} stale={stale} />
       <div className="mt-3 flex gap-2">
