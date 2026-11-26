@@ -32,4 +32,6 @@ export interface MenuItem {
   is_hidden: boolean;
   updated_at: string;
   created_at: string;
+  /** Assisted-onboarding drafts only (assisted_shop_items.category); live menu_items have none. */
+  category?: string | null;
 }

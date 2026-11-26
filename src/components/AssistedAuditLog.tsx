@@ -1,4 +1,4 @@
-import { ASSISTED_AUDIT_LABEL, type AssistedAuditRow } from "@/lib/assisted-onboarding";
+import { ASSISTED_AUDIT_LABEL, bulkAuditSummary, type AssistedAuditRow } from "@/lib/assisted-onboarding";
 import { auditValue } from "@/lib/kitchen-admin";
 
 const WHEN = new Intl.DateTimeFormat("en-SG", {
@@ -26,6 +26,8 @@ function changesOf(row: AssistedAuditRow): [string, Change][] {
 function extraOf(row: AssistedAuditRow): string | null {
   const d = row.details ?? {};
   const parts: string[] = [];
+  const bulk = bulkAuditSummary(row.action, d);
+  if (bulk) parts.push(bulk);
   if (typeof d.reason === "string" && d.reason) parts.push(`Reason: ${d.reason}`);
   if (row.action === "link_issued" && typeof d.expires_at === "string") parts.push(`Expires ${WHEN.format(new Date(d.expires_at))}`);
   if (row.action === "claimed") {

@@ -19,6 +19,8 @@ import {
  *   docs/supabase-kitchen-admin-edit.sql             (installed on live; the guard + mask_paynow)
  *   docs/supabase-assisted-onboarding.sql            (installed twice: it must re-run cleanly)
  *   docs/supabase-assisted-onboarding-live-test.sql  (the live rollback-only test)
+ *   docs/supabase-assisted-menu-import.sql           (categories, CSV import, category photo; installed twice)
+ *   docs/supabase-assisted-menu-import-live-test.sql (its live rollback-only test)
  * on top of the real billing files (subscriptions step 1 + step 2 +
  * docs/supabase-billing-off.sql: the claim makes no subscription row), and
  * stand-ins for the live objects the claim touches: auth.users and
@@ -35,6 +37,8 @@ const read = (p: string) => readFileSync(new URL(`../../docs/${p}`, import.meta.
 const KITCHEN_ADMIN = read("supabase-kitchen-admin-edit.sql");
 const SCRIPT = read("supabase-assisted-onboarding.sql");
 const LIVE_TEST = read("supabase-assisted-onboarding-live-test.sql");
+const MENU_IMPORT = read("supabase-assisted-menu-import.sql");
+const MENU_LIVE_TEST = read("supabase-assisted-menu-import-live-test.sql");
 // The real billing files, in live order: subscriptions step 1, step 2, then billing off (the pilot).
 const BILLING = ["supabase-subscriptions.sql", "supabase-subscriptions-step2.sql", "supabase-billing-off.sql"].map(read);
 
@@ -277,6 +281,8 @@ before(async () => {
   before_fp = await fingerprint();
   await db.exec(SCRIPT);
   await db.exec(SCRIPT); // re-runnable
+  await db.exec(MENU_IMPORT);
+  await db.exec(MENU_IMPORT); // re-runnable
 });
 
 describe("install", () => {
@@ -628,5 +634,344 @@ describe("HQ photo uploads (kitchen-photos/assisted/<shop_id>/)", () => {
 
     // Once claimed, the draft folder takes no more uploads.
     await rejects(upload("admin", `assisted/${shopId}/${crypto.randomUUID()}.jpg`), /row-level security/);
+  });
+});
+
+/*
+ * docs/supabase-assisted-menu-import.sql: draft categories, the CSV import
+ * and "Set photo for a category". Installed (twice) by the before() hook above.
+ */
+type ImportItem = { name: string; price: string; category?: string | null; hidden?: boolean };
+type ImportCounts = { imported: number; hidden: number; skipped: number; existing_hidden: number; replace_all: boolean };
+
+const importMenu = (shopId: string, items: ImportItem[], replaceAll = false, who: Who = "admin") =>
+  as(who, async () =>
+    (await one<{ r: ImportCounts }>("select public.admin_import_assisted_menu($1, $2::jsonb, $3) as r", [shopId, JSON.stringify(items), replaceAll])).r
+  );
+const categoryPhoto = (shopId: string, category: string | null, url: string, replace = false, who: Who = "admin") =>
+  as(who, async () =>
+    (await one<{ n: number }>("select public.admin_set_assisted_category_photo($1, $2, $3, $4) as n", [shopId, category, url, replace])).n
+  );
+const draftItems = (shopId: string) =>
+  q<{ name: string; price: string; category: string | null; is_hidden: boolean; photo_url: string | null }>(
+    "select name, price::text, category, is_hidden, photo_url from public.assisted_shop_items where shop_id = $1 order by created_at, id",
+    [shopId]
+  );
+const auditActions = async (shopId: string) =>
+  (await q<{ action: string }>("select action from public.assisted_onboarding_audit where shop_id = $1 order by id", [shopId])).map((r) => r.action);
+const auditDetails = (shopId: string, action: string) =>
+  q<{ details: Record<string, unknown> }>("select details from public.assisted_onboarding_audit where shop_id = $1 and action = $2 order by id", [shopId, action]);
+
+let menuMobile = 85550000;
+const menuDraft = () => createDraft({ owner_mobile: String(menuMobile++) });
+
+/** A fresh database with the onboarding stack; withMenu also installs the menu import file. */
+async function freshStack(withMenu: boolean): Promise<PGlite> {
+  const fresh = new PGlite();
+  await fresh.exec(STUBS);
+  for (const sql of BILLING) await fresh.exec(sql);
+  await fresh.exec(KITCHEN_ADMIN);
+  await fresh.exec(SCRIPT);
+  if (withMenu) await fresh.exec(MENU_IMPORT);
+  return fresh;
+}
+
+describe("menu import — install", () => {
+  it("leaves the claim, the kitchen guard, the terms trigger and the draft item guard exactly as they were", async () => {
+    const fresh = await freshStack(false);
+    const fp = async () =>
+      (
+        await fresh.query(`select md5(pg_get_functiondef('public.assisted_claim_complete(text, text, uuid, text, text)'::regprocedure)) as claim,
+                                  md5(pg_get_functiondef('public.guard_admin_kitchen_edit()'::regprocedure)) as guard,
+                                  md5(pg_get_functiondef('public.stamp_kitchen_terms_acknowledgement()'::regprocedure)) as terms,
+                                  md5(pg_get_functiondef('public.guard_assisted_shop_item()'::regprocedure)) as item_guard`)
+      ).rows[0];
+    const before = await fp();
+    const results = await fresh.exec(MENU_IMPORT);
+    assert.equal((results[results.length - 1].rows[0] as { result: string }).result, "MENU IMPORT INSTALLED");
+    assert.deepEqual(await fp(), before);
+    await fresh.close();
+  });
+
+  it("the onboarding file's own fingerprint check still passes (it refuses to re-run, with nothing changed)", async () => {
+    // The onboarding file's section 9 compares the guard and terms functions; they are untouched (test above).
+    // Once the menu file is installed, re-running the onboarding file is refused up front instead of undoing it.
+    assert.deepEqual(await fingerprint(), before_fp);
+    let message = "";
+    try {
+      await db.exec(SCRIPT);
+    } catch (e) {
+      message = (e as Error).message;
+    } finally {
+      await db.exec("rollback").catch(() => {});
+    }
+    assert.match(message, /supabase-assisted-menu-import\.sql is installed.*Nothing was changed/);
+    assert.equal((await one<{ n: number }>("select count(*)::int as n from information_schema.columns where table_name = 'assisted_shop_items' and column_name = 'category'")).n, 1);
+  });
+
+  it("refuses to run before the onboarding file, and nothing changes", async () => {
+    const fresh = new PGlite();
+    await fresh.exec(STUBS);
+    await fresh.exec(KITCHEN_ADMIN);
+    let message = "";
+    try {
+      await fresh.exec(MENU_IMPORT);
+    } catch (e) {
+      message = (e as Error).message;
+    }
+    assert.match(message, /menu import: missing .*assisted_shop_items.*Nothing was changed/);
+    await fresh.exec("rollback");
+    assert.equal((await fresh.query<{ n: number }>("select count(*)::int as n from pg_proc where proname = 'admin_import_assisted_menu'")).rows[0].n, 0);
+    await fresh.close();
+  });
+
+  it("re-running changes nothing (functions, triggers, constraints, grants, data)", async () => {
+    const fresh = await freshStack(true);
+    const snap = async () => ({
+      fns: (await fresh.query("select proname, prosrc, prosecdef, proconfig, proacl::text from pg_proc where proname in ('admin_import_assisted_menu', 'admin_set_assisted_category_photo', 'audit_assisted_onboarding_row', 'normalize_assisted_item_category') order by proname")).rows,
+      trg: (await fresh.query("select tgname, pg_get_triggerdef(oid) as d from pg_trigger where tgrelid = 'public.assisted_shop_items'::regclass and not tgisinternal order by tgname")).rows,
+      con: (await fresh.query("select conname, pg_get_constraintdef(oid) as d from pg_constraint where conname in ('assisted_shop_items_category_check', 'assisted_onboarding_audit_action_check') order by conname")).rows,
+      acl: (await fresh.query("select attname, attacl::text from pg_attribute where attrelid = 'public.assisted_shop_items'::regclass and attnum > 0 and not attisdropped order by attnum")).rows,
+    });
+    const first = await snap();
+    await fresh.exec(MENU_IMPORT);
+    assert.deepEqual(await snap(), first);
+    await fresh.close();
+  });
+
+  it("category: HQ can read, set and change it; trimmed with inner spaces collapsed; over 60 refused; anon has nothing", async () => {
+    const shopId = await menuDraft();
+    const itemId = await as("admin", async () =>
+      (await one<{ id: string }>("insert into public.assisted_shop_items (shop_id, name, price, category) values ($1, 'Kopi', 1.5, '  Hot   Drinks ') returning id", [shopId])).id
+    );
+    assert.equal((await one<{ category: string }>("select category from public.assisted_shop_items where id = $1", [itemId])).category, "Hot Drinks");
+    await as("admin", () => q("update public.assisted_shop_items set category = '   ' where id = $1", [itemId]));
+    assert.equal((await one<{ category: string | null }>("select category from public.assisted_shop_items where id = $1", [itemId])).category, null);
+    await rejects(as("admin", () => q("update public.assisted_shop_items set category = $2 where id = $1", [itemId, "c".repeat(61)])), /assisted_shop_items_category_check/);
+    assert.equal((await one<{ ok: boolean }>("select has_column_privilege('anon', 'public.assisted_shop_items', 'category', 'select') as ok")).ok, false);
+  });
+});
+
+describe("menu import — admin_import_assisted_menu", () => {
+  it("imports in file order with categories, hidden rows hidden, and writes ONE summary audit row with counts only", async () => {
+    const shopId = await menuDraft();
+    const counts = await importMenu(shopId, [
+      { name: "Kaya Toast", price: "2.20", category: "Breakfast" },
+      { name: "Teh Tarik", price: "1.80", category: "Drinks", hidden: true },
+      { name: "Soft-boiled Eggs", price: "1.60", category: "Breakfast" },
+      { name: "Plain water", price: "0.50", category: null },
+    ]);
+    assert.deepEqual(counts, { imported: 4, hidden: 1, skipped: 0, existing_hidden: 0, replace_all: false });
+    assert.deepEqual(await draftItems(shopId), [
+      { name: "Kaya Toast", price: "2.20", category: "Breakfast", is_hidden: false, photo_url: null },
+      { name: "Teh Tarik", price: "1.80", category: "Drinks", is_hidden: true, photo_url: null },
+      { name: "Soft-boiled Eggs", price: "1.60", category: "Breakfast", is_hidden: false, photo_url: null },
+      { name: "Plain water", price: "0.50", category: null, is_hidden: false, photo_url: null },
+    ]);
+    assert.deepEqual(await auditActions(shopId), ["shop_created", "menu_imported"], "no item_added rows");
+    const [{ details }] = await auditDetails(shopId, "menu_imported");
+    assert.deepEqual(details, { imported: 4, hidden: 1, skipped: 0, existing_hidden: 0, replace_all: false });
+    assert.doesNotMatch(JSON.stringify(details), /Kaya|Breakfast|Teh/);
+    assert.equal((await one<{ s: string }>("select coalesce(current_setting('kb_assist.bulk', true), '') as s")).s, "");
+  });
+
+  it("skips rows already in the draft, visible or hidden, ignoring case and extra spaces; same name in another category is new", async () => {
+    const shopId = await menuDraft();
+    await importMenu(shopId, [
+      { name: "Laksa", price: "6", category: "Noodles" },
+      { name: "Mee Siam", price: "5", category: "Noodles", hidden: true },
+    ]);
+    const counts = await importMenu(shopId, [
+      { name: "  LAKSA ", price: "6.50", category: "noodles" },
+      { name: "mee  siam", price: "5", category: " Noodles " },
+      { name: "Laksa", price: "7", category: "Specials" },
+    ]);
+    assert.equal(counts.imported, 1);
+    assert.equal(counts.skipped, 2);
+    assert.deepEqual((await draftItems(shopId)).map((i) => `${i.name}/${i.category}/${i.price}`), ["Laksa/Noodles/6.00", "Mee Siam/Noodles/5.00", "Laksa/Specials/7.00"]);
+  });
+
+  it("replace all hides every visible item (none deleted) and adds the whole file", async () => {
+    const shopId = await menuDraft();
+    await importMenu(shopId, [
+      { name: "Old A", price: "1", category: "X" },
+      { name: "Old B", price: "2", category: "X", hidden: true },
+      { name: "Old C", price: "3" },
+    ]);
+    const counts = await importMenu(shopId, [{ name: "Old A", price: "1.50", category: "X" }, { name: "New", price: "4" }], true);
+    assert.deepEqual(counts, { imported: 2, hidden: 0, skipped: 0, existing_hidden: 2, replace_all: true });
+    const items = await draftItems(shopId);
+    assert.equal(items.length, 5, "nothing deleted");
+    assert.deepEqual(items.filter((i) => !i.is_hidden).map((i) => i.name), ["Old A", "New"]);
+    assert.deepEqual(await auditActions(shopId), ["shop_created", "menu_imported", "menu_imported"], "no item_hidden / item_added rows");
+  });
+
+  it("refuses bad rows and writes nothing: empty name, bad prices, long name/category, duplicates in the file, over 200 rows, bad hidden", async () => {
+    const shopId = await menuDraft();
+    const bad: [ImportItem[], RegExp][] = [
+      [[{ name: "  ", price: "1" }], /Row 1: the name is empty/],
+      [[{ name: "A", price: "1" }, { name: "B", price: "abc" }], /Row 2: the price/],
+      [[{ name: "A", price: "0" }], /Row 1: the price/],
+      [[{ name: "A", price: "-1" }], /Row 1: the price/],
+      [[{ name: "A", price: "4.555" }], /Row 1: the price/],
+      [[{ name: "A", price: "10000" }], /Row 1: the price/],
+      [[{ name: "A", price: "1e3" }], /Row 1: the price/],
+      [[{ name: "n".repeat(81), price: "1" }], /Row 1: the name is longer than 80/],
+      [[{ name: "A", price: "1", category: "c".repeat(61) }], /Row 1: the category is longer than 60/],
+      [[{ name: "Laksa", price: "1", category: "N" }, { name: " laksa ", price: "2", category: "n" }], /Row 2: the same name/],
+      [Array.from({ length: 201 }, (_, i) => ({ name: `Item ${i}`, price: "1" })), /201 rows; the most is 200/],
+      [[], /no rows/],
+    ];
+    for (const [items, pattern] of bad) await rejects(importMenu(shopId, items), pattern);
+    await rejects(
+      as("admin", () => q("select public.admin_import_assisted_menu($1, $2::jsonb, false)", [shopId, JSON.stringify([{ name: "A", price: "1", hidden: "yes" }])])),
+      /hidden must be true or false/
+    );
+    assert.deepEqual(await draftItems(shopId), []);
+    assert.deepEqual(await auditActions(shopId), ["shop_created"]);
+  });
+
+  it("200 rows is fine", async () => {
+    const shopId = await menuDraft();
+    const counts = await importMenu(shopId, Array.from({ length: 200 }, (_, i) => ({ name: `Item ${i}`, price: "1.00", category: `Cat ${i % 7}` })));
+    assert.equal(counts.imported, 200);
+    assert.deepEqual((await draftItems(shopId)).slice(0, 3).map((i) => i.name), ["Item 0", "Item 1", "Item 2"]);
+  });
+
+  it("refuses non-admins, anon, service_role, unknown shops, cancelled and claimed shops", async () => {
+    const shopId = await menuDraft();
+    const row = [{ name: "A", price: "1" }];
+    await rejects(importMenu(shopId, row, false, "customer"), /admins only/);
+    await rejects(importMenu(shopId, row, false, "anon"), /permission denied/);
+    await rejects(importMenu(shopId, row, false, "service"), /permission denied/);
+    await rejects(importMenu(id(778), row), /Shop not found/);
+
+    const cancelled = await menuDraft();
+    await as("admin", () => q("select public.admin_cancel_assisted_shop($1, 'test')", [cancelled]));
+    await rejects(importMenu(cancelled, row), /already been claimed or cancelled/);
+
+    const claimed = await menuDraft();
+    await addItem(claimed, "Char kway teow", 6);
+    const { hash } = await issue(claimed);
+    assert.equal((await complete(hash, await newOwnerAccount(claimed, 530))).status, "ok");
+    await rejects(importMenu(claimed, row), /already been claimed or cancelled/);
+    await rejects(categoryPhoto(claimed, null, "https://example.com/x.jpg"), /already been claimed or cancelled/);
+  });
+});
+
+describe("menu import — admin_set_assisted_category_photo", () => {
+  it("fills only items with no photo, hidden ones included, other categories untouched; one summary row, no item_updated rows", async () => {
+    const shopId = await menuDraft();
+    await importMenu(shopId, [
+      { name: "Kaya Toast", price: "2", category: "Breakfast" },
+      { name: "Eggs", price: "1.6", category: "Breakfast", hidden: true },
+      { name: "Toast set", price: "4", category: "Breakfast" },
+      { name: "Kopi", price: "1.5", category: "Drinks" },
+      { name: "Water", price: "0.5" },
+    ]);
+    await as("admin", () => q("update public.assisted_shop_items set photo_url = 'https://example.com/own.jpg' where shop_id = $1 and name = 'Toast set'", [shopId]));
+
+    assert.equal(await categoryPhoto(shopId, " BREAKFAST ", "https://example.com/b.jpg"), 2);
+    const photos = Object.fromEntries((await draftItems(shopId)).map((i) => [i.name, i.photo_url]));
+    assert.deepEqual(photos, {
+      "Kaya Toast": "https://example.com/b.jpg",
+      Eggs: "https://example.com/b.jpg",
+      "Toast set": "https://example.com/own.jpg",
+      Kopi: null,
+      Water: null,
+    });
+    assert.deepEqual(await auditActions(shopId), ["shop_created", "menu_imported", "item_updated", "category_photo_set"]);
+    assert.deepEqual((await auditDetails(shopId, "category_photo_set"))[0].details, { updated: 2, items_in_category: 3, replace_existing: false });
+  });
+
+  it("replace_existing changes the ones with another photo too (not ones already on it); null category = items with no category", async () => {
+    const shopId = await menuDraft();
+    await importMenu(shopId, [
+      { name: "A", price: "1", category: "Rice" },
+      { name: "B", price: "1", category: "Rice" },
+      { name: "C", price: "1" },
+      { name: "D", price: "1", category: "" },
+    ]);
+    assert.equal(await categoryPhoto(shopId, "rice", "https://example.com/1.jpg"), 2);
+    assert.equal(await categoryPhoto(shopId, "rice", "https://example.com/1.jpg", true), 0, "already on that photo");
+    assert.equal(await categoryPhoto(shopId, "Rice", "https://example.com/2.jpg"), 0, "both have a photo now");
+    assert.equal(await categoryPhoto(shopId, "Rice", "https://example.com/2.jpg", true), 2);
+    assert.equal(await categoryPhoto(shopId, null, "https://example.com/none.jpg"), 2);
+    assert.equal(await categoryPhoto(shopId, "   ", "https://example.com/none2.jpg", true), 2, "blank = no category");
+    assert.deepEqual((await draftItems(shopId)).map((i) => i.photo_url), [
+      "https://example.com/2.jpg",
+      "https://example.com/2.jpg",
+      "https://example.com/none2.jpg",
+      "https://example.com/none2.jpg",
+    ]);
+    assert.equal((await auditActions(shopId)).filter((a) => a === "item_updated").length, 0);
+  });
+
+  it("individual photos can still be changed afterwards, and that edit is audited per item as before", async () => {
+    const shopId = await menuDraft();
+    await importMenu(shopId, [{ name: "A", price: "1", category: "Rice" }]);
+    await categoryPhoto(shopId, "Rice", "https://example.com/1.jpg");
+    await as("admin", () => q("update public.assisted_shop_items set photo_url = 'https://example.com/mine.jpg' where shop_id = $1", [shopId]));
+    assert.equal((await draftItems(shopId))[0].photo_url, "https://example.com/mine.jpg");
+    assert.deepEqual(await auditActions(shopId), ["shop_created", "menu_imported", "category_photo_set", "item_updated"]);
+  });
+
+  it("refuses bad links, long categories, non-admins, anon and cancelled shops", async () => {
+    const shopId = await menuDraft();
+    for (const url of ["", "javascript:alert(1)", "ftp://x/y.jpg", "https://exa mple.com/x.jpg", `https://example.com/${"x".repeat(2000)}`]) {
+      await rejects(categoryPhoto(shopId, null, url), /must be an uploaded photo or a web link/);
+    }
+    await rejects(categoryPhoto(shopId, "c".repeat(61), "https://example.com/x.jpg"), /longer than 60/);
+    await rejects(categoryPhoto(shopId, null, "https://example.com/x.jpg", false, "customer"), /admins only/);
+    await rejects(categoryPhoto(shopId, null, "https://example.com/x.jpg", false, "anon"), /permission denied/);
+    await as("admin", () => q("select public.admin_cancel_assisted_shop($1, 'test')", [shopId]));
+    await rejects(categoryPhoto(shopId, null, "https://example.com/x.jpg"), /already been claimed or cancelled/);
+  });
+});
+
+describe("menu import — claim and live test", () => {
+  it("the claim copies visible items with their photos but not the category (claim function unchanged)", async () => {
+    const shopId = await menuDraft();
+    await importMenu(shopId, [
+      { name: "Kaya Toast", price: "2.20", category: "Breakfast" },
+      { name: "Check me", price: "3", category: "Breakfast", hidden: true },
+    ]);
+    await categoryPhoto(shopId, "Breakfast", "https://example.com/b.jpg");
+    const { hash } = await issue(shopId);
+    const owner = await newOwnerAccount(shopId, 531);
+    assert.equal((await complete(hash, owner)).status, "ok");
+    assert.deepEqual(await q("select name, price::text, photo_url from public.menu_items where kitchen_id = $1", [owner]), [
+      { name: "Kaya Toast", price: "2.20", photo_url: "https://example.com/b.jpg" },
+    ]);
+    assert.equal((await one<{ n: number }>("select count(*)::int as n from information_schema.columns where table_name = 'menu_items' and column_name = 'category'")).n, 0);
+  });
+
+  it("the menu import live test passes and rolls everything back", async () => {
+    const tables = ["public.assisted_shops", "public.assisted_shop_items", "public.assisted_onboarding_audit"];
+    const counts = () => Promise.all(tables.map(async (t) => (await one<{ n: number }>(`select count(*)::int as n from ${t}`)).n));
+    const before = await counts();
+    let message = "(the live test finished without its closing exception)";
+    try {
+      await db.exec(MENU_LIVE_TEST.replaceAll("PUT-ADMIN-ID", ADMIN));
+    } catch (e) {
+      message = (e as Error).message;
+    } finally {
+      await db.exec("rollback").catch(() => {});
+      await db.exec("reset role").catch(() => {});
+    }
+    assert.match(message, /^TEST OK, rolled back/);
+    assert.deepEqual(await counts(), before);
+  });
+
+  it("the live test refuses without an admin id", async () => {
+    let message = "";
+    try {
+      await db.exec(MENU_LIVE_TEST);
+    } catch (e) {
+      message = (e as Error).message;
+    } finally {
+      await db.exec("rollback").catch(() => {});
+    }
+    assert.match(message, /REFUSED: fill in PUT-ADMIN-ID first/);
   });
 });

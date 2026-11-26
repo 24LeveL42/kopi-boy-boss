@@ -1,9 +1,12 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useId, useState, useTransition } from "react";
 import { addMenuItem, setMenuItemHidden, updateMenuItem } from "@/lib/actions";
 import type { MenuItemInput, MenuItemResult } from "@/lib/kitchen-admin";
 import type { MenuItem } from "@/lib/types-kitchen";
+import { categoryGroups, categoryLabel, categoryPhotoButtonLabel, categoryPhotoNotice, categoryPhotoTargets, type CategoryGroup } from "@/lib/draft-menu";
+import { CATEGORY_MAX } from "@/lib/menu-csv";
+import type { CategoryPhotoResult } from "@/lib/assisted-onboarding";
 import { KitchenPhotoField } from "./KitchenPhotoField";
 import { Spinner } from "./Spinner";
 
@@ -22,7 +25,10 @@ export type MenuEditorActions = {
 
 const KITCHEN_ACTIONS: MenuEditorActions = { add: addMenuItem, update: updateMenuItem, setHidden: setMenuItemHidden };
 
-type EditorContext = { actions: MenuEditorActions; photoPath?: PhotoPath; draft: boolean };
+/** "Set photo for all [Category] items" (assisted drafts only). */
+export type CategoryPhotoAction = (ownerId: string, category: string | null, photoUrl: string, replaceExisting: boolean) => Promise<CategoryPhotoResult>;
+
+type EditorContext = { actions: MenuEditorActions; photoPath?: PhotoPath; draft: boolean; categories: string[] };
 
 /**
  * HQ adds, edits and hides a kitchen's menu items, one item per save, through
@@ -36,23 +42,84 @@ export function MenuItemsEditor({
   actions = KITCHEN_ACTIONS,
   photoPath,
   draft = false,
+  setCategoryPhoto,
+  onItemsChange,
 }: {
   kitchenId: string;
   initialItems: MenuItem[];
   actions?: MenuEditorActions;
   photoPath?: PhotoPath;
-  /** An assisted-onboarding draft: nothing is shown to customers yet, so the wording changes. */
+  /** An assisted-onboarding draft: nothing is shown to customers yet, so the wording changes, items have a category and are grouped by it. */
   draft?: boolean;
+  /** Drafts only: the category photo button on each category heading. */
+  setCategoryPhoto?: CategoryPhotoAction;
+  /** Told the current list after every change (the CSV import counts against it). */
+  onItemsChange?: (items: MenuItem[]) => void;
 }) {
-  const ctx: EditorContext = { actions, photoPath, draft };
   const [items, setItems] = useState<MenuItem[]>(initialItems);
+  useEffect(() => {
+    onItemsChange?.(items);
+  }, [items, onItemsChange]);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const groups = draft ? categoryGroups(items) : [];
+  const ctx: EditorContext = { actions, photoPath, draft, categories: groups.map((g) => g.category).filter((c): c is string => c !== null) };
 
   const visible = items.filter((i) => !i.is_hidden);
   const hidden = items.filter((i) => i.is_hidden);
 
   function replace(item: MenuItem) {
     setItems((prev) => prev.map((i) => (i.id === item.id ? item : i)));
+  }
+
+  if (draft) {
+    return (
+      <div className="space-y-5">
+        {groups.length === 0 && (
+          <p className="text-sm" style={{ color: "var(--oc-text-soft)" }}>
+            No items yet. Add them below or import a CSV file. Add at least one visible item before sending the claim link.
+          </p>
+        )}
+        {groups.map((group) => (
+          <section key={group.key}>
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold" style={{ color: "var(--oc-text)" }}>
+                {categoryLabel(group.category)} ({group.items.length}
+                {group.hiddenCount > 0 && `, ${group.hiddenCount} hidden: not copied to the shop`})
+              </h3>
+              {setCategoryPhoto && (
+                <CategoryPhotoButton
+                  group={group}
+                  kitchenId={kitchenId}
+                  photoPath={photoPath}
+                  onApply={(url, replaceExisting) => setCategoryPhoto(kitchenId, group.category, url, replaceExisting)}
+                  onItems={setItems}
+                />
+              )}
+            </div>
+            <ul className="divide-y rounded-lg border" style={{ borderColor: "var(--oc-line)" }}>
+              {group.items.map((item) =>
+                editingId === item.id ? (
+                  <li key={item.id} className="p-3" style={{ borderColor: "var(--oc-line)" }}>
+                    <EditItemForm
+                      ctx={ctx}
+                      kitchenId={kitchenId}
+                      item={item}
+                      onDone={(saved) => {
+                        if (saved) replace(saved);
+                        setEditingId(null);
+                      }}
+                    />
+                  </li>
+                ) : (
+                  <ItemRow key={item.id} ctx={ctx} kitchenId={kitchenId} item={item} onEdit={() => setEditingId(item.id)} onSaved={replace} />
+                )
+              )}
+            </ul>
+          </section>
+        ))}
+        <AddItemForm ctx={ctx} kitchenId={kitchenId} onAdded={(item) => setItems((prev) => [...prev, item])} />
+      </div>
+    );
   }
 
   return (
@@ -246,6 +313,9 @@ function ItemFields({
   setPrice,
   setPhoto,
   disabled,
+  category,
+  setCategory,
+  categories,
 }: {
   photoPath?: PhotoPath;
   kitchenId: string;
@@ -256,10 +326,35 @@ function ItemFields({
   setPrice: (v: string) => void;
   setPhoto: (v: string) => void;
   disabled: boolean;
+  /** Drafts only: shown when setCategory is passed. */
+  category?: string;
+  setCategory?: (v: string) => void;
+  categories?: string[];
 }) {
   const inputStyle = { borderColor: "var(--oc-line)", background: "var(--oc-card)", color: "var(--oc-text)" };
+  const listId = useId();
   return (
     <div className="space-y-3">
+      {setCategory && (
+        <label className="block text-xs font-medium" style={{ color: "var(--oc-text-soft)" }}>
+          Category (optional)
+          <input
+            value={category ?? ""}
+            onChange={(e) => setCategory(e.target.value)}
+            maxLength={CATEGORY_MAX}
+            list={listId}
+            placeholder="e.g. Noodles, Drinks"
+            disabled={disabled}
+            className="mt-1 w-full rounded-lg border px-3 py-2 text-sm"
+            style={inputStyle}
+          />
+          <datalist id={listId}>
+            {(categories ?? []).map((c) => (
+              <option key={c} value={c} />
+            ))}
+          </datalist>
+        </label>
+      )}
       <div className="grid gap-3 sm:grid-cols-[2fr_1fr]">
         <label className="block text-xs font-medium" style={{ color: "var(--oc-text-soft)" }}>
           Item name
@@ -304,16 +399,30 @@ function EditItemForm({
   const [name, setName] = useState(item.name);
   const [price, setPrice] = useState(Number(item.price).toFixed(2));
   const [photo, setPhoto] = useState(item.photo_url ?? "");
+  const [category, setCategory] = useState(item.category ?? "");
   const { pending, error, stale, run } = useItemAction();
 
   function save(e: React.FormEvent) {
     e.preventDefault();
-    run(() => ctx.actions.update(kitchenId, item.id, item.updated_at, { name, price, photo_url: photo || null }), onDone);
+    const values: MenuItemInput = { name, price, photo_url: photo || null };
+    if (ctx.draft) values.category = category || null;
+    run(() => ctx.actions.update(kitchenId, item.id, item.updated_at, values), onDone);
   }
 
   return (
     <form onSubmit={save}>
-      <ItemFields photoPath={ctx.photoPath} kitchenId={kitchenId} name={name} price={price} photo={photo} setName={setName} setPrice={setPrice} setPhoto={setPhoto} disabled={pending} />
+      <ItemFields
+        photoPath={ctx.photoPath}
+        kitchenId={kitchenId}
+        name={name}
+        price={price}
+        photo={photo}
+        setName={setName}
+        setPrice={setPrice}
+        setPhoto={setPhoto}
+        disabled={pending}
+        {...(ctx.draft ? { category, setCategory, categories: ctx.categories } : {})}
+      />
       <ItemError error={error} stale={stale} />
       <div className="mt-3 flex gap-2">
         <button
@@ -344,19 +453,23 @@ function AddItemForm({ ctx, kitchenId, onAdded }: { ctx: EditorContext; kitchenI
   const [name, setName] = useState("");
   const [price, setPrice] = useState("");
   const [photo, setPhoto] = useState("");
+  const [category, setCategory] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const { pending, error, stale, run } = useItemAction();
 
   function add(e: React.FormEvent) {
     e.preventDefault();
     setNotice(null);
+    const values: MenuItemInput = { name, price, photo_url: photo || null };
+    if (ctx.draft) values.category = category || null;
     run(
-      () => ctx.actions.add(kitchenId, { name, price, photo_url: photo || null }),
+      () => ctx.actions.add(kitchenId, values),
       (item) => {
         onAdded(item);
         setName("");
         setPrice("");
         setPhoto("");
+        // The category stays: the next item is often in the same one.
         setNotice(ctx.draft ? `Added “${item.name}” to the draft menu.` : `Added “${item.name}”. Customers can see it now.`);
       }
     );
@@ -367,7 +480,18 @@ function AddItemForm({ ctx, kitchenId, onAdded }: { ctx: EditorContext; kitchenI
       <h3 className="mb-2 text-sm font-semibold" style={{ color: "var(--oc-text)" }}>
         Add a menu item
       </h3>
-      <ItemFields photoPath={ctx.photoPath} kitchenId={kitchenId} name={name} price={price} photo={photo} setName={setName} setPrice={setPrice} setPhoto={setPhoto} disabled={pending} />
+      <ItemFields
+        photoPath={ctx.photoPath}
+        kitchenId={kitchenId}
+        name={name}
+        price={price}
+        photo={photo}
+        setName={setName}
+        setPrice={setPrice}
+        setPhoto={setPhoto}
+        disabled={pending}
+        {...(ctx.draft ? { category, setCategory, categories: ctx.categories } : {})}
+      />
       <ItemError error={error} stale={stale} />
       {notice && (
         <p role="status" className="mt-2 rounded-lg px-3 py-2 text-sm" style={{ background: "var(--oc-green-bg)", color: "var(--oc-green-fg)" }}>
@@ -385,5 +509,123 @@ function AddItemForm({ ctx, kitchenId, onAdded }: { ctx: EditorContext; kitchenI
         {pending ? "Adding…" : "Add item"}
       </button>
     </form>
+  );
+}
+
+/**
+ * "Set photo for all [Category] items": upload or paste a link (the same
+ * field and limits as the shop photo), then one server call sets it on every
+ * item of the category that has no photo yet (hidden ones too), or on all of
+ * them with the checkbox. Each item's photo can still be changed afterwards.
+ */
+function CategoryPhotoButton({
+  group,
+  kitchenId,
+  photoPath,
+  onApply,
+  onItems,
+}: {
+  group: CategoryGroup<MenuItem>;
+  kitchenId: string;
+  photoPath?: PhotoPath;
+  onApply: (photoUrl: string, replaceExisting: boolean) => Promise<CategoryPhotoResult>;
+  onItems: (items: MenuItem[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [photo, setPhoto] = useState("");
+  const [replaceExisting, setReplaceExisting] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, start] = useTransition();
+  const label = categoryPhotoButtonLabel(group.category);
+  const targets = photo ? categoryPhotoTargets(group, photo, replaceExisting) : null;
+
+  if (!open) {
+    return (
+      <div className="flex items-center gap-2">
+        {notice && (
+          <span role="status" className="text-xs" style={{ color: "var(--oc-green-fg)" }}>
+            {notice}
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={() => {
+            setOpen(true);
+            setNotice(null);
+          }}
+          className="rounded-lg border px-3 py-1.5 text-sm"
+          style={{ borderColor: "var(--oc-line)", color: "var(--oc-text)" }}
+        >
+          {label}
+        </button>
+      </div>
+    );
+  }
+
+  function apply() {
+    setError(null);
+    start(async () => {
+      try {
+        const result = await onApply(photo, replaceExisting);
+        if (!result.ok) {
+          setError(result.message);
+          return;
+        }
+        if (result.items) onItems(result.items);
+        else window.location.reload();
+        setNotice(categoryPhotoNotice(result.updated));
+        setOpen(false);
+        setPhoto("");
+        setReplaceExisting(false);
+      } catch {
+        setError("Not saved: your admin session couldn't be confirmed. Please sign in again and retry.");
+      }
+    });
+  }
+
+  return (
+    <div className="w-full rounded-lg border p-3" style={{ borderColor: "var(--oc-line)" }}>
+      <p className="mb-2 text-sm font-semibold" style={{ color: "var(--oc-text)" }}>
+        {label}
+      </p>
+      <KitchenPhotoField kitchenId={kitchenId} label="Category photo" value={photo} onChange={setPhoto} disabled={pending} uploadPath={photoPath} />
+      <label className="mt-2 flex items-center gap-2 text-sm" style={{ color: "var(--oc-text)" }}>
+        <input type="checkbox" checked={replaceExisting} onChange={(e) => setReplaceExisting(e.target.checked)} disabled={pending} />
+        Also replace photos that are already set
+      </label>
+      <p className="mt-1 text-xs" style={{ color: "var(--oc-text-soft)" }}>
+        {targets === null
+          ? `${group.withoutPhoto} of ${group.items.length} items have no photo yet. Hidden items are included.`
+          : `This will set the photo on ${targets} item${targets === 1 ? "" : "s"} (hidden ones included).`}
+      </p>
+      {error && (
+        <p role="alert" className="mt-2 rounded-lg px-3 py-2 text-sm" style={{ background: "var(--oc-red-bg)", color: "var(--oc-red-fg)" }}>
+          {error}
+        </p>
+      )}
+      <div className="mt-3 flex gap-2">
+        <button
+          type="button"
+          onClick={apply}
+          disabled={pending || !photo}
+          aria-busy={pending}
+          className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+          style={{ background: "var(--oc-accent)" }}
+        >
+          {pending && <Spinner className="size-3.5" />}
+          {pending ? "Saving…" : "Set photo"}
+        </button>
+        <button
+          type="button"
+          onClick={() => setOpen(false)}
+          disabled={pending}
+          className="rounded-lg border px-3 py-1.5 text-sm disabled:opacity-50"
+          style={{ borderColor: "var(--oc-line)", color: "var(--oc-text)" }}
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
   );
 }

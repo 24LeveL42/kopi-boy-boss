@@ -25,7 +25,8 @@
  */
 import type { AnyClient } from "./admin-guard.ts";
 import type { CuisineType, MenuItem, MerchantCategory } from "./types-kitchen.ts";
-import { MERCHANT_CATEGORIES, PHOTO_MAX_BYTES, validateKitchenProfile, validateMenuItem } from "./kitchen-admin.ts";
+import { MERCHANT_CATEGORIES, optionalUrl, PHOTO_MAX_BYTES, validateKitchenProfile, validateMenuItem, type MenuItemFields } from "./kitchen-admin.ts";
+import { CATEGORY_MAX, cleanCategory, previewCsv, type CsvError, type ImportMode } from "./menu-csv.ts";
 
 // --- Types and column lists ---
 
@@ -96,7 +97,7 @@ export const ASSISTED_SHOP_COLUMNS =
   "id, status, business_name, category, cuisine_type, is_halal, description, hero_image, owner_name, owner_mobile, business_uen, business_address, postal_code, pricing_plan, created_by, created_at, updated_at, cancelled_at, claimed_user_id, claimed_at, acknowledged_at";
 
 /** Draft menu items; read as MenuItem-shaped rows (kitchen_id = the shop id) by toDraftItem. */
-export const ASSISTED_ITEM_COLUMNS = "id, shop_id, name, price, photo_url, is_hidden, created_at, updated_at";
+export const ASSISTED_ITEM_COLUMNS = "id, shop_id, name, price, photo_url, category, is_hidden, created_at, updated_at";
 
 export const ASSISTED_AUDIT_COLUMNS = "id, created_at, actor_id, actor_kind, shop_id, shop_name, token_id, kitchen_id, action, details";
 
@@ -420,14 +421,26 @@ export function toDraftItem(row: Row | undefined): MenuItem | null {
     is_hidden: row.is_hidden === true,
     updated_at: String(row.updated_at),
     created_at: String(row.created_at),
+    category: typeof row.category === "string" ? row.category : null,
   };
 }
 
-/** Adds a visible draft item: INSERT assisted_shop_items (shop_id, name, price, photo_url). */
+/** The editor's item rules plus the draft category (trimmed, at most 60 characters, '' = none). */
+export function validateDraftItem(input: unknown): Checked<MenuItemFields & { category: string | null }> {
+  const checked = validateMenuItem(input);
+  if (!checked.ok) return checked;
+  const raw = (input as { category?: unknown } | null)?.category;
+  if (raw !== undefined && raw !== null && typeof raw !== "string") return { ok: false, message: "The category must be text." };
+  const category = cleanCategory(raw ?? null);
+  if (category && category.length > CATEGORY_MAX) return { ok: false, message: `The category can be at most ${CATEGORY_MAX} characters.` };
+  return { ok: true, value: { ...checked.value, category } };
+}
+
+/** Adds a visible draft item: INSERT assisted_shop_items (shop_id, name, price, photo_url, category). */
 export async function addDraftItemWith(supabase: AnyClient, shopId: unknown, input: unknown): Promise<DraftItemResult> {
   const bad = checkIds(shopId);
   if (bad) return { ok: false, message: bad };
-  const checked = validateMenuItem(input);
+  const checked = validateDraftItem(input);
   if (!checked.ok) return checked;
   try {
     const { data, error } = await supabase
@@ -448,7 +461,7 @@ async function updateDraftItem(
   shopId: unknown,
   itemId: unknown,
   loadedUpdatedAt: unknown,
-  values: { name?: string; price?: number; photo_url?: string | null; is_hidden?: boolean }
+  values: { name?: string; price?: number; photo_url?: string | null; category?: string | null; is_hidden?: boolean }
 ): Promise<DraftItemResult> {
   const bad = checkIds(shopId, itemId) ?? checkStamp(loadedUpdatedAt);
   if (bad) return { ok: false, message: bad };
@@ -476,7 +489,7 @@ export async function updateDraftItemWith(
   loadedUpdatedAt: unknown,
   input: unknown
 ): Promise<DraftItemResult> {
-  const checked = validateMenuItem(input);
+  const checked = validateDraftItem(input);
   if (!checked.ok) return checked;
   return updateDraftItem(supabase, shopId, itemId, loadedUpdatedAt, checked.value);
 }
@@ -491,6 +504,116 @@ export async function setDraftItemHiddenWith(
 ): Promise<DraftItemResult> {
   if (typeof hidden !== "boolean") return { ok: false, message: "Not saved: hidden must be yes or no." };
   return updateDraftItem(supabase, shopId, itemId, loadedUpdatedAt, { is_hidden: hidden });
+}
+
+/** The draft menu in display order (created_at; the import spaces its rows a microsecond apart). */
+export async function listDraftItemsWith(supabase: AnyClient, shopId: string): Promise<{ ok: true; items: MenuItem[] } | { ok: false; message: string }> {
+  try {
+    const { data, error } = await supabase.from("assisted_shop_items").select(ASSISTED_ITEM_COLUMNS).eq("shop_id", shopId).order("created_at");
+    if (error) return { ok: false, message: error.message };
+    return { ok: true, items: rowsOf(data).map(toDraftItem).filter((i): i is MenuItem => i !== null) };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+// --- Draft menu: CSV import and "Set photo for a category" (one database call each) ---
+
+export type ImportCounts = { imported: number; hidden: number; skipped: number; existing_hidden: number };
+export type ImportResult =
+  | { ok: true; counts: ImportCounts; items: MenuItem[] | null }
+  | { ok: false; message: string; errors?: CsvError[] };
+export type CategoryPhotoResult = { ok: true; updated: number; items: MenuItem[] | null } | { ok: false; message: string };
+
+const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : Number(v) || 0);
+
+/**
+ * Imports a CSV into a draft. The text is checked again here with the same
+ * rules as the browser preview (previewCsv); any row error refuses the whole
+ * file. Then ONE call to admin_import_assisted_menu, which re-checks admin,
+ * draft and every row, skips (or, with "replace", first hides) and writes one
+ * summary audit row. Price goes as "4.50" text, exactly 2 decimals.
+ */
+export async function importDraftMenuWith(supabase: AnyClient, shopId: unknown, csvText: unknown, mode: unknown): Promise<ImportResult> {
+  const bad = checkIds(shopId);
+  if (bad) return { ok: false, message: bad.replace("Not saved", "Not imported") };
+  if (mode !== "add" && mode !== "replace") return { ok: false, message: "Not imported: choose add or replace." };
+  if (typeof csvText !== "string" || !csvText.trim()) return { ok: false, message: "Not imported: the file is empty." };
+  const preview = previewCsv(csvText);
+  if (preview.errors.length) {
+    return { ok: false, message: `Not imported: fix the ${preview.errors.length === 1 ? "error" : `${preview.errors.length} errors`} in the file first.`, errors: preview.errors };
+  }
+  const items = preview.rows.map((r) => ({ name: r.name, price: r.price.toFixed(2), category: r.category, hidden: r.hidden }));
+  try {
+    const { data, error } = await supabase.rpc("admin_import_assisted_menu", {
+      p_shop_id: shopId,
+      p_items: items,
+      p_replace_all: (mode as ImportMode) === "replace",
+    });
+    if (error) return { ok: false, message: friendlyAssistedError(error.message, "Not imported") };
+    const d = (data ?? {}) as Record<string, unknown>;
+    const counts = { imported: num(d.imported), hidden: num(d.hidden), skipped: num(d.skipped), existing_hidden: num(d.existing_hidden) };
+    const list = await listDraftItemsWith(supabase, shopId as string);
+    return { ok: true, counts, items: list.ok ? list.items : null };
+  } catch (e) {
+    return { ok: false, message: friendlyAssistedError(e instanceof Error ? e.message : String(e), "Not imported") };
+  }
+}
+
+/**
+ * Sets one photo on every item of a category in the draft (hidden ones too)
+ * that has no photo yet, or on all of them with replaceExisting. category
+ * null or '' = the items with no category. One call to
+ * admin_set_assisted_category_photo, which re-checks admin and draft and
+ * writes one summary audit row.
+ */
+export async function setCategoryPhotoWith(
+  supabase: AnyClient,
+  shopId: unknown,
+  category: unknown,
+  photoUrl: unknown,
+  replaceExisting: unknown
+): Promise<CategoryPhotoResult> {
+  const bad = checkIds(shopId);
+  if (bad) return { ok: false, message: bad };
+  if (typeof replaceExisting !== "boolean") return { ok: false, message: "Not saved: choose whether to replace photos that are already set." };
+  if (category !== null && category !== undefined && typeof category !== "string") return { ok: false, message: "Not saved: the category must be text." };
+  const cat = cleanCategory((category as string | null | undefined) ?? null);
+  if (cat && cat.length > CATEGORY_MAX) return { ok: false, message: `Not saved: the category can be at most ${CATEGORY_MAX} characters.` };
+  const photo = optionalUrl(photoUrl, "category photo");
+  if (!photo.ok) return { ok: false, message: `Not saved: ${photo.message}` };
+  if (!photo.value) return { ok: false, message: "Not saved: upload a photo or paste a link first." };
+  try {
+    const { data, error } = await supabase.rpc("admin_set_assisted_category_photo", {
+      p_shop_id: shopId,
+      p_category: cat,
+      p_photo_url: photo.value,
+      p_replace_existing: replaceExisting,
+    });
+    if (error) return { ok: false, message: friendlyAssistedError(error.message) };
+    const list = await listDraftItemsWith(supabase, shopId as string);
+    return { ok: true, updated: num(data), items: list.ok ? list.items : null };
+  } catch (e) {
+    return { ok: false, message: friendlyAssistedError(e instanceof Error ? e.message : String(e)) };
+  }
+}
+
+/** The one-line summary of a bulk audit row (counts only, as stored). */
+export function bulkAuditSummary(action: string, details: Record<string, unknown> | null | undefined): string | null {
+  const d = details ?? {};
+  const n = (k: string) => num(d[k]);
+  const items = (k: number) => `${k} item${k === 1 ? "" : "s"}`;
+  if (action === "menu_imported") {
+    const parts = [`${items(n("imported"))} imported`];
+    if (n("hidden")) parts.push(`${n("hidden")} hidden to check with the owner`);
+    if (n("skipped")) parts.push(`${n("skipped")} skipped (already in the draft)`);
+    if (d.replace_all === true) parts.push(`replace all: ${items(n("existing_hidden"))} hidden`);
+    return parts.join(" · ");
+  }
+  if (action === "category_photo_set") {
+    return `${items(n("updated"))} of ${n("items_in_category")} in the category got the photo${d.replace_existing === true ? " (existing photos replaced)" : ""}`;
+  }
+  return null;
 }
 
 // --- Claim links (admin_* functions; each re-checks admin in the database) ---
@@ -627,6 +750,8 @@ export const ASSISTED_AUDIT_LABEL: Record<string, string> = {
   link_sent: "Opened WhatsApp to send the link",
   link_revoked: "Revoked a claim link",
   claimed: "Owner claimed the shop",
+  menu_imported: "Imported the menu from a CSV file",
+  category_photo_set: "Set a photo for a category",
 };
 
 /** "8123 4567" for display. */

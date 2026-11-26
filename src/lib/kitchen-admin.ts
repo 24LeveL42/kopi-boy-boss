@@ -68,7 +68,7 @@ export type KitchenProfile = {
 
 export type MenuItemFields = { name: string; price: number; photo_url: string | null };
 /** What the form sends: price as typed ("4.50"); validateMenuItem turns it into MenuItemFields. */
-export type MenuItemInput = { name: string; price: number | string; photo_url: string | null };
+export type MenuItemInput = { name: string; price: number | string; photo_url: string | null; /** Assisted drafts only; the live menu has no category. */ category?: string | null };
 
 export type KitchenSaveResult = { ok: true; updatedAt: string } | { ok: false; message: string; stale?: boolean };
 export type MenuItemResult = { ok: true; item: MenuItem } | { ok: false; message: string; stale?: boolean };
@@ -89,7 +89,7 @@ function text(value: unknown): string {
 }
 
 /** '' or missing -> null; otherwise an http(s) URL, or an error. */
-function optionalUrl(value: unknown, what: string): Checked<string | null> {
+export function optionalUrl(value: unknown, what: string): Checked<string | null> {
   const v = text(value);
   if (!v) return { ok: true, value: null };
   if (v.length > 2000) return { ok: false, message: `The ${what} link is too long.` };

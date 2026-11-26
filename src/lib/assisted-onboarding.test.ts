@@ -7,7 +7,13 @@ import { fileURLToPath } from "node:url";
 import { fakeSupabase, fail, ok } from "./testing/fake-supabase.ts";
 import {
   addDraftItemWith,
+  ASSISTED_AUDIT_LABEL,
+  ASSISTED_ITEM_COLUMNS,
   assistedPhotoPath,
+  bulkAuditSummary,
+  importDraftMenuWith,
+  setCategoryPhotoWith,
+  validateDraftItem,
   cancelDraftShopWith,
   claimLinkFor,
   claimMessage,
@@ -186,7 +192,7 @@ test("draft items: add, edit and hide, scoped to the shop; never a delete", asyn
   const added = await addDraftItemWith(client, SHOP, { name: " Wanton mee ", price: "$5", photo_url: null });
   assert.ok(added.ok);
   assert.equal(added.item.kitchen_id, SHOP, "shown in the shared editor with the shop id");
-  assert.deepEqual(calls[0].values, { shop_id: SHOP, name: "Wanton mee", price: 5, photo_url: null });
+  assert.deepEqual(calls[0].values, { shop_id: SHOP, name: "Wanton mee", price: 5, photo_url: null, category: null });
 
   assert.ok((await updateDraftItemWith(client, SHOP, ITEM, LOADED, { name: "Wanton mee", price: "6", photo_url: null })).ok);
   assert.deepEqual(calls[1].filters, [
@@ -212,6 +218,7 @@ test("toDraftItem maps a row, and refuses junk", () => {
     is_hidden: false,
     updated_at: SAVED,
     created_at: LOADED,
+    category: null,
   });
   assert.equal(toDraftItem(undefined), null);
   assert.equal(toDraftItem({ name: "x" }), null);
@@ -353,6 +360,7 @@ const FEATURE = [
   "lib/assisted-onboarding.ts",
   "components/AssistedShopForm.tsx",
   "components/AssistedMenuEditor.tsx",
+  "components/AssistedMenuImport.tsx",
   "components/ClaimLinkPanel.tsx",
   "components/CancelAssistedShop.tsx",
   "components/AssistedAuditLog.tsx",
@@ -395,8 +403,8 @@ test("draft menu item photos use the same upload as the shop photo: file picker,
   // MenuItemsEditor hands the draft's photoPath to the same KitchenPhotoField, for both the add and the edit form.
   const editor = file("components/MenuItemsEditor.tsx");
   assert.match(editor, /<KitchenPhotoField kitchenId=\{kitchenId\} label="Item photo" value=\{photo\} onChange=\{setPhoto\} disabled=\{disabled\} uploadPath=\{photoPath\} \/>/);
-  assert.equal(editor.match(/<ItemFields photoPath=\{ctx\.photoPath\}/g)?.length, 2, "add and edit forms both pass the draft photo path");
-  assert.match(editor, /photo_url: photo \|\| null/, "the photo is saved with the item; Remove saves no photo");
+  assert.equal(editor.match(/<ItemFields\s+photoPath=\{ctx\.photoPath\}/g)?.length, 2, "add and edit forms both pass the draft photo path");
+  assert.equal(editor.match(/photo_url: photo \|\| null/g)?.length, 2, "the photo is saved with the item; Remove saves no photo");
 
   const field = file("components/KitchenPhotoField.tsx");
   assert.match(field, /type="file"\s+accept="image\/jpeg,image\/png,image\/webp"/);
@@ -423,6 +431,8 @@ test("actions.ts only calls assisted-onboarding.ts for this feature, after asser
     ["markAssistedClaimLinkSent", "markClaimLinkSentWith"],
     ["revokeAssistedClaimLink", "revokeClaimLinkWith"],
     ["cancelAssistedShop", "cancelDraftShopWith"],
+    ["importAssistedMenu", "importDraftMenuWith"],
+    ["setAssistedCategoryPhoto", "setCategoryPhotoWith"],
   ]) {
     const start = actions.indexOf(`export async function ${name}(`);
     assert.ok(start > 0, name);
@@ -458,4 +468,140 @@ test("the shop page never shows the menu editor over a failed read, and only dra
 
 test("the sidebar links to Assisted onboarding", () => {
   assert.match(file("components/ops/OpsSidebar.tsx"), /\{ label: "Assisted onboarding", href: "\/merchants\/assisted" \}/);
+});
+
+// --- Draft categories, CSV import, category photo ---
+
+test("draft items carry a category: trimmed, inner spaces collapsed, '' = none, at most 60; the live menu rules still apply", async () => {
+  assert.match(ASSISTED_ITEM_COLUMNS, /\bcategory\b/);
+  assert.deepEqual(validateDraftItem({ name: "Kopi", price: "1.5", photo_url: null, category: "  Hot   Drinks " }), {
+    ok: true,
+    value: { name: "Kopi", price: 1.5, photo_url: null, category: "Hot Drinks" },
+  });
+  assert.equal((validateDraftItem({ name: "Kopi", price: "1.5", photo_url: null, category: "   " }) as { value: { category: unknown } }).value.category, null);
+  assert.equal((validateDraftItem({ name: "Kopi", price: "1.5", photo_url: null }) as { value: { category: unknown } }).value.category, null);
+  assert.match((validateDraftItem({ name: "Kopi", price: "1.5", photo_url: null, category: "c".repeat(61) }) as { message: string }).message, /at most 60/);
+  assert.equal(validateDraftItem({ name: "Kopi", price: "1.5", photo_url: null, category: 7 }).ok, false);
+  assert.equal(validateDraftItem({ name: "", price: "1.5", photo_url: null, category: "A" }).ok, false);
+
+  const { client, calls } = fakeSupabase({
+    "assisted_shop_items.insert": ok([itemRow({ category: "Noodles" })]),
+    "assisted_shop_items.update": ok([itemRow({ category: null })]),
+  });
+  const added = await addDraftItemWith(client, SHOP, { name: "Wanton mee", price: "5", photo_url: null, category: " Noodles " });
+  assert.ok(added.ok && added.item.category === "Noodles");
+  assert.equal((calls[0].values as { category: unknown }).category, "Noodles");
+  await updateDraftItemWith(client, SHOP, ITEM, LOADED, { name: "Wanton mee", price: "5", photo_url: null, category: "" });
+  assert.equal((calls[1].values as { category: unknown }).category, null);
+});
+
+const CSV = "category,name,price,check_with_owner\nNoodles,Laksa,6.5,\nNoodles,Mee Siam,5,ask if still sold\n,Water,0.5,";
+
+test("CSV import: checked on the server first; a file with errors never reaches the database", async () => {
+  const { client, calls } = fakeSupabase({});
+  const bad = await importDraftMenuWith(client, SHOP, "name,price\nLaksa,abc\nKopi,", "add");
+  assert.equal(bad.ok, false);
+  assert.ok(!bad.ok && bad.errors?.length === 2 && bad.errors[0].row === 2);
+  assert.equal((await importDraftMenuWith(client, SHOP, CSV, "merge")).ok, false, "unknown mode");
+  assert.equal((await importDraftMenuWith(client, "not-a-uuid", CSV, "add")).ok, false);
+  assert.equal((await importDraftMenuWith(client, SHOP, "   ", "add")).ok, false);
+  assert.equal((await importDraftMenuWith(client, SHOP, 42, "add")).ok, false);
+  assert.deepEqual(calls, []);
+});
+
+test("CSV import: one admin_import_assisted_menu call with 2-decimal prices, categories and hidden-by-note; then the fresh list", async () => {
+  const { client, calls } = fakeSupabase({
+    "rpc.admin_import_assisted_menu": ok({ imported: 2, hidden: 1, skipped: 1, existing_hidden: 0, replace_all: false }),
+    "assisted_shop_items.select": ok([itemRow({ name: "Laksa", category: "Noodles" })]),
+  });
+  const r = await importDraftMenuWith(client, SHOP, `﻿${CSV}`, "add");
+  assert.ok(r.ok);
+  assert.deepEqual(r.counts, { imported: 2, hidden: 1, skipped: 1, existing_hidden: 0 });
+  assert.equal(r.items?.[0].category, "Noodles");
+  assert.equal(calls[0].kind, "rpc");
+  assert.deepEqual(calls[0].args, {
+    p_shop_id: SHOP,
+    p_items: [
+      { name: "Laksa", price: "6.50", category: "Noodles", hidden: false },
+      { name: "Mee Siam", price: "5.00", category: "Noodles", hidden: true },
+      { name: "Water", price: "0.50", category: null, hidden: false },
+    ],
+    p_replace_all: false,
+  });
+  assert.deepEqual(calls[1].filters, [["shop_id", SHOP]], "the list is read back for this shop only");
+  assert.deepEqual(calls[1].order, ["created_at"], "in display order");
+
+  const replace = fakeSupabase({ "rpc.admin_import_assisted_menu": ok({ imported: 3, hidden: 1, skipped: 0, existing_hidden: 4 }), "assisted_shop_items.select": ok([]) });
+  await importDraftMenuWith(replace.client, SHOP, CSV, "replace");
+  assert.equal((replace.calls[0].args as { p_replace_all: boolean }).p_replace_all, true);
+});
+
+test("CSV import: the database's refusals come back as words (claimed shop, not admin)", async () => {
+  for (const [msg, pattern] of [
+    ["This shop has already been claimed or cancelled, so its draft menu can't be changed.", /^Not imported: This shop has already been claimed/],
+    ["Not allowed: admins only.", /^Not imported: Not allowed/],
+    ["permission denied for function admin_import_assisted_menu", /^Not imported: the database refused/],
+  ] as const) {
+    const { client, calls } = fakeSupabase({ "rpc.admin_import_assisted_menu": fail(msg) });
+    const r = await importDraftMenuWith(client, SHOP, CSV, "add");
+    assert.ok(!r.ok);
+    assert.match(r.message, pattern);
+    assert.equal(calls.length, 1, "no list read after a refusal");
+  }
+});
+
+test("category photo: link or upload URL checked first, blank category = no category, one rpc call, then the fresh list", async () => {
+  const empty = fakeSupabase({});
+  for (const url of ["", "javascript:alert(1)", "not a url", 7]) {
+    assert.equal((await setCategoryPhotoWith(empty.client, SHOP, "Noodles", url, false)).ok, false, String(url));
+  }
+  assert.equal((await setCategoryPhotoWith(empty.client, SHOP, "c".repeat(61), "https://example.com/a.jpg", false)).ok, false);
+  assert.equal((await setCategoryPhotoWith(empty.client, SHOP, "Noodles", "https://example.com/a.jpg", "yes")).ok, false);
+  assert.equal((await setCategoryPhotoWith(empty.client, "x", "Noodles", "https://example.com/a.jpg", false)).ok, false);
+  assert.deepEqual(empty.calls, []);
+
+  const { client, calls } = fakeSupabase({ "rpc.admin_set_assisted_category_photo": ok(3), "assisted_shop_items.select": ok([itemRow()]) });
+  const url = `https://x.supabase.co/storage/v1/object/public/kitchen-photos/assisted/${SHOP}/a.jpg`;
+  const r = await setCategoryPhotoWith(client, SHOP, "  Hot   Drinks ", url, true);
+  assert.ok(r.ok && r.updated === 3 && r.items?.length === 1);
+  assert.deepEqual(calls[0].args, { p_shop_id: SHOP, p_category: "Hot Drinks", p_photo_url: url, p_replace_existing: true });
+  await setCategoryPhotoWith(client, SHOP, "   ", url, false);
+  assert.equal((calls[2].args as { p_category: unknown }).p_category, null);
+
+  const refused = fakeSupabase({ "rpc.admin_set_assisted_category_photo": fail("This shop has already been claimed or cancelled, so its draft menu can't be changed.") });
+  const no = await setCategoryPhotoWith(refused.client, SHOP, null, url, false);
+  assert.ok(!no.ok && /already been claimed/.test(no.message));
+});
+
+test("history: the two bulk rows are labelled and summarised from their counts only", () => {
+  assert.equal(ASSISTED_AUDIT_LABEL.menu_imported, "Imported the menu from a CSV file");
+  assert.equal(ASSISTED_AUDIT_LABEL.category_photo_set, "Set a photo for a category");
+  assert.equal(
+    bulkAuditSummary("menu_imported", { imported: 5, hidden: 2, skipped: 1, existing_hidden: 0, replace_all: false }),
+    "5 items imported · 2 hidden to check with the owner · 1 skipped (already in the draft)"
+  );
+  assert.equal(bulkAuditSummary("menu_imported", { imported: 1, hidden: 0, skipped: 0, existing_hidden: 4, replace_all: true }), "1 item imported · replace all: 4 items hidden");
+  assert.equal(bulkAuditSummary("category_photo_set", { updated: 2, items_in_category: 3, replace_existing: false }), "2 items of 3 in the category got the photo");
+  assert.equal(bulkAuditSummary("item_updated", {}), null);
+  assert.match(file("components/AssistedAuditLog.tsx"), /bulkAuditSummary\(row\.action, d\)/);
+});
+
+test("the draft editor: category field, grouped headings with the category photo button, and the CSV import panel", () => {
+  const editor = file("components/AssistedMenuEditor.tsx");
+  assert.match(editor, /setCategoryPhoto=\{setAssistedCategoryPhoto\}/);
+  assert.match(editor, /<AssistedMenuImport/);
+  assert.match(editor, /onItemsChange=\{setCurrent\}/, "the import counts against what the editor shows now");
+  const items = file("components/MenuItemsEditor.tsx");
+  assert.match(items, /categoryGroups\(items\)/);
+  assert.match(items, /<CategoryPhotoButton/);
+  assert.match(items, /Also replace photos that are already set/);
+  assert.match(items, /const \[replaceExisting, setReplaceExisting\] = useState\(false\);/, "replace is off by default");
+  assert.match(items, /label="Category photo" value=\{photo\} onChange=\{setPhoto\} disabled=\{pending\} uploadPath=\{photoPath\}/, "same upload field and path as the shop photo");
+  assert.equal(items.match(/if \(ctx\.draft\) values\.category = category \|\| null;/g)?.length, 2, "add and edit send the category in drafts only");
+  const imp = file("components/AssistedMenuImport.tsx");
+  assert.match(imp, /accept="\.csv,text\/csv"/);
+  assert.match(imp, /disabled=\{!canImport\}/);
+  assert.match(imp, /const canImport = !!plan && preview!\.total > 0/, "Import is off while the preview has errors");
+  assert.match(imp, /mode === "replace" && !window\.confirm\(replaceConfirmation\(plan\.existingHidden\)\)/);
+  assert.match(imp, /importAssistedMenu\(shopId, text, mode\)/, "the server gets the CSV text and checks it again");
 });

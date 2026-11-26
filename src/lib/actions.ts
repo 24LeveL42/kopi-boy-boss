@@ -24,10 +24,14 @@ import {
   issueClaimLinkWith,
   markClaimLinkSentWith,
   revokeClaimLinkWith,
+  importDraftMenuWith,
   saveDraftShopWith,
+  setCategoryPhotoWith,
   setDraftItemHiddenWith,
   updateDraftItemWith,
+  type CategoryPhotoResult,
   type DraftItemResult,
+  type ImportResult,
   type DraftSaveResult,
   type IssueLinkResult,
   type SimpleResult,
@@ -284,6 +288,27 @@ export async function setAssistedShopItemHidden(
 ): Promise<DraftItemResult> {
   const { supabase } = await assertAdmin();
   const result = await setDraftItemHiddenWith(supabase, shopId, itemId, loadedUpdatedAt, hidden);
+  if (result.ok) revalidateAssisted(shopId);
+  return result;
+}
+
+/** CSV import into a draft: checked again on the server, then one database call (see importDraftMenuWith). */
+export async function importAssistedMenu(shopId: string, csvText: string, mode: "add" | "replace"): Promise<ImportResult> {
+  const { supabase } = await assertAdmin();
+  const result = await importDraftMenuWith(supabase, shopId, csvText, mode);
+  if (result.ok) revalidateAssisted(shopId);
+  return result;
+}
+
+/** "Set photo for all [Category] items" on a draft (see setCategoryPhotoWith). */
+export async function setAssistedCategoryPhoto(
+  shopId: string,
+  category: string | null,
+  photoUrl: string,
+  replaceExisting: boolean
+): Promise<CategoryPhotoResult> {
+  const { supabase } = await assertAdmin();
+  const result = await setCategoryPhotoWith(supabase, shopId, category, photoUrl, replaceExisting);
   if (result.ok) revalidateAssisted(shopId);
   return result;
 }

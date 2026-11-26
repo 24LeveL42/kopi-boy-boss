@@ -130,6 +130,13 @@ begin
     raise exception 'Stopped: storage.objects is missing';
   end if;
 
+  -- docs/supabase-assisted-menu-import.sql replaced the audit trigger and
+  -- added the category grants; re-running this file would undo both.
+  if exists (select 1 from information_schema.columns
+             where table_schema = 'public' and table_name = 'assisted_shop_items' and column_name = 'category') then
+    raise exception 'Stopped: supabase-assisted-menu-import.sql is installed (assisted_shop_items.category exists); re-running this file would undo it. Re-run supabase-assisted-menu-import.sql instead. Nothing was changed.';
+  end if;
+
   -- Fingerprints of the guard and terms functions; section 9 compares.
   perform set_config('kb_assist.guard_md5',
     md5(pg_get_functiondef('public.guard_admin_kitchen_edit()'::regprocedure)), true);

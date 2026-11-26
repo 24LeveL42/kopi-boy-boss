@@ -16,6 +16,8 @@ export type Call = {
   values?: unknown;
   filters: [string, unknown][];
   columns?: string;
+  /** Columns passed to .order(), in call order. */
+  order?: string[];
 };
 
 export const ok = (data: unknown): Result => ({ data, error: null });
@@ -84,6 +86,10 @@ export function fakeSupabase(respond: Record<string, Result | Result[]>) {
         },
         in(column: string, value: unknown) {
           call.filters.push([column, value]);
+          return builder;
+        },
+        order(column: string) {
+          (call.order ??= []).push(column);
           return builder;
         },
         maybeSingle() {

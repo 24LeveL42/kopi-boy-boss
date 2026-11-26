@@ -48,7 +48,7 @@ test("server action files export nothing but async functions (no unguarded expor
   }
 });
 
-test("exactly the 24 known actions exist (a new one must be added here on purpose)", () => {
+test("exactly the 26 known actions exist (a new one must be added here on purpose)", () => {
   const names = ACTION_FILES.flatMap((f) => actions(f.text).map((a) => a.name)).sort();
   assert.deepEqual(names, [
     "addAssistedShopItem",
@@ -58,6 +58,7 @@ test("exactly the 24 known actions exist (a new one must be added here on purpos
     "cancelAssistedShop",
     "createAssistedShop",
     "deleteTestPartner",
+    "importAssistedMenu",
     "issueAssistedClaimLink",
     "markAssistedClaimLinkSent",
     "rejectCookApplication",
@@ -67,6 +68,7 @@ test("exactly the 24 known actions exist (a new one must be added here on purpos
     "saveAssistedShop",
     "saveKitchenProfile",
     "setAdminMessageStatus",
+    "setAssistedCategoryPhoto",
     "setAssistedShopItemHidden",
     "setComplaintThreadStatus",
     "setMenuItemHidden",
