@@ -14,6 +14,13 @@ what to do and what you should see.
   (part H) straight away.
 - Write down as you go: the draft id (from the address bar), the claim time
   and the kitchen id.
+- **UEN after claiming** (docs/supabase-assisted-uen-later.sql): do NOT
+  issue any real claim link, to a real owner or to your own spare number,
+  for a shop with no UEN until the Partner Kitchen Setup UEN step ("Add
+  your UEN to go live") is deployed. Today's Kitchen Setup asks for live on
+  every save, and the database refuses live without a UEN, so that owner
+  couldn't save their PayNow details. Until then, test that path only with
+  `docs/supabase-assisted-uen-later-live-test.sql` (it always rolls back).
 
 Placeholders: `<SPARE-MOBILE>` is your spare number (8 digits);
 `<DRAFT-ID>` is the draft's id.

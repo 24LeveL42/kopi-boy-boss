@@ -1067,3 +1067,281 @@ describe("menu import — claim and live test", () => {
     assert.match(message, /REFUSED: fill in PUT-ADMIN-ID first/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The UEN after claiming: docs/supabase-assisted-uen-later.sql and its live test.
+// Built on the live definitions: src/lib/testing/live-uen-functions.sql holds
+// them verbatim and is loaded over the stand-ins above. Every fingerprint
+// ignores line endings: md5(replace(pg_get_functiondef(oid), E'\r', '')).
+// ---------------------------------------------------------------------------
+
+const UEN_LATER = read("supabase-assisted-uen-later.sql");
+const UEN_LIVE_TEST = read("supabase-assisted-uen-later-live-test.sql");
+const LIVE_UEN_FUNCTIONS = readFileSync(new URL("./testing/live-uen-functions.sql", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+
+/** What live answered to md5(pg_get_functiondef(oid)) on 2026-11-27 (with its Windows line endings). */
+const LIVE_RAW_MD5: Record<string, string> = {
+  assisted_claim_complete: "d355a6d0016cb6ddc6bb78d21d186b7c",
+  admin_issue_assisted_claim_link: "5578ec37e4091839c4566ba7d34d92d6",
+  check_cook_application_uen: "c9ea17375a8e98a6b4488db312a95946",
+  guard_cook_application: "88eda3d83c8d2d554fd138bc7c8afbad",
+  set_kitchen_business_uen: "daf7e4f43c96e2fa6a520ef635f32203",
+  sync_kitchen_business_uen: "d222b7f7e1380c6246636aa9c36fae65",
+  approved_business_uen: "90f772d15784447550922dfb336f3519",
+  guard_admin_kitchen_edit: "3069a7a97174a86d74fc11a6b3776bd9",
+  stamp_kitchen_terms_acknowledgement: "18cccd13bf95c162e2fcf8b54bd680ec",
+};
+const UNTOUCHED = ["guard_admin_kitchen_edit", "stamp_kitchen_terms_acknowledgement", "guard_cook_application", "set_kitchen_business_uen", "sync_kitchen_business_uen", "approved_business_uen"];
+const CHANGED = ["check_cook_application_uen", "assisted_claim_complete", "admin_issue_assisted_claim_link"];
+const ADDED = ["set_my_business_uen", "admin_set_kitchen_business_uen", "kitchen_live_needs_uen"];
+
+/** The pins in the file: section 0's (name, before, after) rows, and section 8's (name, after) rows. */
+const UEN_PINS = (() => {
+  const before: Record<string, string> = {};
+  const after: Record<string, string> = {};
+  for (const m of UEN_LATER.matchAll(/\('public\.(\w+)\([^']*\)', '([0-9a-f]{32})', '([0-9a-f]{32})'\)/g)) before[m[1]] = m[2];
+  const checksAfter = UEN_LATER.slice(UEN_LATER.indexOf("-- 8. CHECKS AFTER"));
+  for (const m of checksAfter.matchAll(/\('public\.(\w+)\([^']*\)', '([0-9a-f]{32})'\)/g)) after[m[1]] = m[2];
+  return { before, after };
+})();
+
+/** One function's text from a file: from its "create or replace function" to the closing $$; (the last one wins). */
+function functionText(sql: string, name: string): string {
+  const start = sql.toLowerCase().lastIndexOf(`create or replace function public.${name}(`);
+  assert.ok(start >= 0, `${name} not found`);
+  return sql.slice(start, sql.indexOf("\n$$;", start) + 4);
+}
+
+const FP_SQL = `select p.proname as name, md5(replace(pg_get_functiondef(p.oid), E'\\r', '')) as fp
+                from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname = any($1::text[])`;
+async function fingerprints(d: PGlite, names: string[]): Promise<Record<string, string>> {
+  const rows = (await d.query<{ name: string; fp: string }>(FP_SQL, [names])).rows;
+  return Object.fromEntries(rows.map((r) => [r.name, r.fp]));
+}
+
+/** The live cook_applications policies (Partner docs/supabase-schema.sql section 2); the stand-ins have none. */
+const APPLICATION_POLICIES = `
+create policy "Applicants can read their own cook application" on public.cook_applications for select using (auth.uid() = user_id);
+create policy "Applicants can submit a cook application" on public.cook_applications for insert with check (auth.uid() = user_id);
+create policy "Admins can read every cook application" on public.cook_applications for select using (public.user_has_role('admin'));
+create policy "Admins can update every cook application" on public.cook_applications for update using (public.user_has_role('admin'));
+`;
+
+/** The onboarding + menu stack with the live UEN functions, as live is before the new file. */
+async function uenStack(crlf = false): Promise<PGlite> {
+  const fresh = await freshStack(true);
+  await fresh.exec(APPLICATION_POLICIES);
+  await fresh.exec(crlf ? LIVE_UEN_FUNCTIONS.replace(/\n/g, "\r\n") : LIVE_UEN_FUNCTIONS);
+  return fresh;
+}
+
+async function runScript(d: PGlite, sql: string): Promise<{ result: string | null; error: string | null }> {
+  try {
+    const results = await d.exec(sql);
+    const last = results[results.length - 1]?.rows[0] as { result?: string } | undefined;
+    return { result: last?.result ?? null, error: null };
+  } catch (e) {
+    await d.exec("rollback").catch(() => {});
+    await d.exec("reset role").catch(() => {});
+    return { result: null, error: (e as Error).message };
+  }
+}
+
+/** Re-creates a function from its own definition with one extra comment line: a "drifted" live copy. */
+async function drift(d: PGlite, signature: string) {
+  const def = (await d.query<{ d: string }>(`select pg_get_functiondef('${signature}'::regprocedure) as d`)).rows[0].d;
+  const changed = def.replace(/\n(begin|declare)\n/, "\n$1\n  -- changed by hand on live\n");
+  assert.notEqual(changed, def);
+  await d.exec(changed);
+}
+
+describe("UEN after claiming — pins and install", () => {
+  it("the file pins every function: 9 before, 9 + 3 new after", () => {
+    assert.deepEqual(Object.keys(UEN_PINS.before).sort(), [...UNTOUCHED, ...CHANGED].sort());
+    assert.deepEqual(Object.keys(UEN_PINS.after).sort(), [...UNTOUCHED, ...CHANGED, ...ADDED].sort());
+    for (const n of UNTOUCHED) assert.equal(UEN_PINS.after[n], UEN_PINS.before[n], `${n} must stay identical`);
+    for (const n of CHANGED) assert.notEqual(UEN_PINS.after[n], UEN_PINS.before[n], `${n} changes`);
+  });
+
+  it("the before pins are the live definitions: with Windows line endings they give live's own md5s, and the pins ignore line endings", async () => {
+    const guardAdmin = functionText(KITCHEN_ADMIN, "guard_admin_kitchen_edit");
+    for (const [crlf, label] of [[true, "CRLF"], [false, "LF"]] as const) {
+      const bare = new PGlite();
+      await bare.exec(`create role anon; create role authenticated; create role service_role; create schema auth;
+        create type public.assisted_claim_tokens as (id uuid); create type public.assisted_shops as (id uuid);`);
+      for (const n of Object.keys(LIVE_RAW_MD5)) {
+        // Live = this repo's text for these two (they matched exactly); the fixture for the rest.
+        const text =
+          n === "guard_admin_kitchen_edit" ? guardAdmin : n === "admin_issue_assisted_claim_link" ? functionText(SCRIPT, n) : functionText(LIVE_UEN_FUNCTIONS, n);
+        await bare.exec("set check_function_bodies = off;\n" + (crlf ? text.replace(/\n/g, "\r\n") : text));
+      }
+      const rows = (await bare.query<{ name: string; raw: string; fp: string }>(
+        `select p.proname as name, md5(pg_get_functiondef(p.oid)) as raw, md5(replace(pg_get_functiondef(p.oid), E'\\r', '')) as fp
+         from pg_proc p where p.pronamespace = 'public'::regnamespace`
+      )).rows;
+      for (const n of Object.keys(LIVE_RAW_MD5)) {
+        const r = rows.find((x) => x.name === n)!;
+        if (crlf) assert.equal(r.raw, LIVE_RAW_MD5[n], `${label} ${n}: the fixture is not the live text`);
+        assert.equal(r.fp, UEN_PINS.before[n], `${label} ${n}: the pin`);
+      }
+      await bare.close();
+    }
+  });
+
+  it("installs: exactly three functions change, the other six (kitchen guard and terms trigger included) are identical, new fingerprints as pinned; a re-run changes nothing", async () => {
+    const fresh = await uenStack();
+    const all = [...UNTOUCHED, ...CHANGED, ...ADDED];
+    const before = await fingerprints(fresh, all);
+    for (const n of [...UNTOUCHED, ...CHANGED]) assert.equal(before[n], UEN_PINS.before[n], `${n} before`);
+    for (const n of ADDED) assert.equal(before[n], undefined);
+
+    assert.deepEqual(await runScript(fresh, UEN_LATER), { result: "UEN LATER INSTALLED", error: null });
+    const after = await fingerprints(fresh, all);
+    for (const n of all) assert.equal(after[n], UEN_PINS.after[n], `${n} after`);
+    for (const n of UNTOUCHED) assert.equal(after[n], before[n], `${n} untouched`);
+
+    const triggers = async () =>
+      (await fresh.query<{ tgname: string }>("select tgname from pg_trigger where tgrelid = 'public.kitchens'::regclass and not tgisinternal and (tgtype & 2) <> 0 order by tgname")).rows.map((r) => r.tgname);
+    const order = await triggers();
+    assert.equal(order[order.length - 1], "y_kitchen_live_needs_uen");
+    assert.ok(order.indexOf("before_kitchen_business_uen") < order.indexOf("y_kitchen_live_needs_uen"));
+    assert.ok(order.includes("kitchens_live_since_stamp"));
+
+    assert.deepEqual(await runScript(fresh, UEN_LATER), { result: "UEN LATER INSTALLED", error: null });
+    assert.deepEqual(await fingerprints(fresh, all), after);
+    assert.deepEqual(await triggers(), order);
+    await fresh.close();
+  });
+
+  it("pasted with Windows line endings (and installed over CRLF live text) it installs the same", async () => {
+    const fresh = await uenStack(true);
+    assert.deepEqual(await runScript(fresh, UEN_LATER.replace(/\n/g, "\r\n")), { result: "UEN LATER INSTALLED", error: null });
+    const after = await fingerprints(fresh, [...UNTOUCHED, ...CHANGED, ...ADDED]);
+    for (const [n, fp] of Object.entries(after)) assert.equal(fp, UEN_PINS.after[n], n);
+    await fresh.close();
+  });
+
+  for (const [signature, name] of [
+    ["public.guard_cook_application()", "an untouched function (guard_cook_application)"],
+    ["public.guard_admin_kitchen_edit()", "the kitchen guard"],
+    ["public.stamp_kitchen_terms_acknowledgement()", "the terms trigger"],
+    ["public.assisted_claim_complete(text, text, uuid, text, text)", "a function it changes (the claim)"],
+    ["public.check_cook_application_uen()", "a function it changes (the UEN check)"],
+  ] as const) {
+    it(`stops with nothing changed when ${name} differs from the pinned live text`, async () => {
+      const fresh = await uenStack();
+      await drift(fresh, signature);
+      const drifted = await fingerprints(fresh, [...UNTOUCHED, ...CHANGED]);
+      const { result, error } = await runScript(fresh, UEN_LATER);
+      assert.equal(result, null);
+      assert.match(error ?? "", new RegExp(`^Stopped: ${signature.replace(/[()]/g, "\\$&")} is not the version this file was written for .*Nothing was changed`));
+      assert.deepEqual(await fingerprints(fresh, [...UNTOUCHED, ...CHANGED]), drifted, "nothing changed");
+      assert.deepEqual(await fingerprints(fresh, ADDED), {}, "no new function");
+      assert.equal((await fresh.query("select 1 from pg_trigger where tgname = 'y_kitchen_live_needs_uen'")).rows.length, 0);
+      await fresh.close();
+    });
+  }
+
+  it("stops when a new function already exists with other text", async () => {
+    const fresh = await uenStack();
+    await fresh.exec("create function public.set_my_business_uen(p_uen text) returns text language sql as $$ select p_uen $$;");
+    const { error } = await runScript(fresh, UEN_LATER);
+    assert.match(error ?? "", /^Stopped: public\.set_my_business_uen\(text\) already exists and is not this file's version/);
+    assert.equal((await fingerprints(fresh, ["assisted_claim_complete"])).assisted_claim_complete, UEN_PINS.before.assisted_claim_complete);
+    await fresh.close();
+  });
+
+  it("stops when a BEFORE trigger on kitchens would fire after the new one", async () => {
+    const fresh = await uenStack();
+    await fresh.exec("create trigger z_late_before before update on public.kitchens for each row execute function public.touch_kitchen_updated_at();");
+    const { error } = await runScript(fresh, UEN_LATER);
+    assert.match(error ?? "", /^Stopped: BEFORE trigger\(s\) z_late_before on kitchens would fire after y_kitchen_live_needs_uen/);
+    await fresh.close();
+  });
+
+  it("the claim diff is the flag lines and the billing-off comment only; the claim link loses only its UEN check; the UEN check only its null branch", () => {
+    const lines = (s: string) => s.split("\n");
+    const diff = (a: string, b: string) => {
+      const A = new Set(lines(a));
+      const B = new Set(lines(b));
+      return { removed: lines(a).filter((l) => !B.has(l)), added: lines(b).filter((l) => !A.has(l)) };
+    };
+    const claim = diff(functionText(LIVE_UEN_FUNCTIONS, "assisted_claim_complete"), functionText(UEN_LATER, "assisted_claim_complete"));
+    assert.deepEqual(claim.removed, [
+      "  --    to 'cook' and create the subscription row and founding number (fail",
+      "  --    closed: an error there undoes the whole claim). created_at = when HQ",
+      "  --    set the shop up, which is what founding eligibility reads.",
+    ]);
+    assert.deepEqual(claim.added, [
+      "  --    to 'cook'. The billing trigger makes no subscription row and no",
+      "  --    founding number while billing is off (the pilot); if billing is ever",
+      "  --    on it fails closed (an error there undoes the whole claim).",
+      "  --    created_at = when HQ set the shop up.",
+      "  --    A shop that isn't Home Cook may be claimed before its UEN is in: the",
+      "  --    flag lets this one insert through check_cook_application_uen.",
+      "  if v_shop.category <> 'home-cook' and v_shop.business_uen is null then",
+      "    perform pg_catalog.set_config('kb_assist.uen_pending', 'on', true);",
+      "  perform pg_catalog.set_config('kb_assist.uen_pending', '', true);",
+    ]);
+    // The claim's comment now matches the repo's onboarding file (billing off).
+    assert.ok(SCRIPT.includes("  --    to 'cook'. The billing trigger makes no subscription row and no\n"));
+
+    const issue = diff(functionText(SCRIPT, "admin_issue_assisted_claim_link"), functionText(UEN_LATER, "admin_issue_assisted_claim_link"));
+    assert.deepEqual(issue.added, []);
+    assert.deepEqual(issue.removed, [
+      "  if v_shop.category <> 'home-cook' and v_shop.business_uen is null then",
+      "    raise exception 'Add the business UEN before sending a claim link (only a Home Cook can be set up without one).' using errcode = '22023';",
+    ]);
+
+    const check = diff(functionText(LIVE_UEN_FUNCTIONS, "check_cook_application_uen"), functionText(UEN_LATER, "check_cook_application_uen"));
+    assert.deepEqual(check.removed, ["    raise exception 'A Business Registration Number (UEN) is required for registered businesses.' using errcode = '23514';"]);
+    assert.ok(check.added.includes("    if not (coalesce(current_setting('kb_assist.uen_pending', true), '') = 'on'"));
+    assert.ok(check.added.includes("            and current_user not in ('anon', 'authenticated')"));
+    assert.ok(check.added.includes("            and new.status = 'approved') then"));
+  });
+});
+
+describe("UEN after claiming — live test and the existing files", () => {
+  let fresh: PGlite;
+  before(async () => {
+    fresh = await uenStack();
+    assert.equal((await runScript(fresh, UEN_LATER)).result, "UEN LATER INSTALLED");
+  });
+
+  const counts = async () =>
+    (await fresh.query<Record<string, number>>(
+      `select (select count(*)::int from auth.users) users, (select count(*)::int from public.kitchens) kitchens,
+              (select count(*)::int from public.cook_applications) apps, (select count(*)::int from public.assisted_shops) shops,
+              (select count(*)::int from public.kitchen_admin_audit) audit`
+    )).rows[0];
+
+  it("the live test passes (owner steps as a real owner session) and rolls everything back", async () => {
+    const before = await counts();
+    const { error } = await runScript(fresh, UEN_LIVE_TEST.replaceAll("PUT-ADMIN-ID", ADMIN));
+    assert.match(error ?? "(no closing exception)", /^TEST OK, rolled back/);
+    assert.deepEqual(await counts(), before);
+  });
+
+  it("the live test refuses without an admin id, and before the file is installed", async () => {
+    assert.match((await runScript(fresh, UEN_LIVE_TEST)).error ?? "", /REFUSED: fill in PUT-ADMIN-ID first/);
+    const notYet = await uenStack();
+    assert.match((await runScript(notYet, UEN_LIVE_TEST.replaceAll("PUT-ADMIN-ID", ADMIN))).error ?? "", /REFUSED: run docs\/supabase-assisted-uen-later\.sql first/);
+    await notYet.close();
+  });
+
+  it("the existing onboarding and menu import live tests still pass after it", async () => {
+    for (const sql of [LIVE_TEST, MENU_LIVE_TEST]) {
+      const { error } = await runScript(fresh, sql.replaceAll("PUT-ADMIN-ID", ADMIN));
+      assert.match(error ?? "(no closing exception)", /^TEST OK, rolled back/);
+    }
+  });
+
+  it("re-running the menu import file keeps the new claim (its own claim check compares before/after); the onboarding file still refuses to re-run", async () => {
+    const all = [...UNTOUCHED, ...CHANGED, ...ADDED];
+    const fp = await fingerprints(fresh, all);
+    assert.equal((await runScript(fresh, MENU_IMPORT)).result, "MENU IMPORT INSTALLED");
+    assert.match((await runScript(fresh, SCRIPT)).error ?? "", /supabase-assisted-menu-import\.sql is installed.*Nothing was changed/);
+    assert.deepEqual(await fingerprints(fresh, all), fp);
+    assert.equal(fp.assisted_claim_complete, UEN_PINS.after.assisted_claim_complete);
+  });
+});
