@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   buildApprovalEmail,
   DEFAULT_PARTNER_APP_URL,
+  escapeHtml,
   LEGAL_LINE,
   maskEmail,
   partnerWelcomeUrl,
@@ -222,19 +223,19 @@ test("both emails have one button to Partner, the support email, Reply wording a
   }
 });
 
-test("merchant email: the approved subscription and rider wording, nothing promised for free", () => {
+const PILOT_LINES = [
+  "Kopi Boy is free to join and use during the pilot: no subscription, registration fee or setup fee.",
+  "Customers pay you directly; Kopi Boy doesn't handle payments. If we ever add a commission it will be 15% of food sales after discounts, not counting the delivery fee, and never higher. We'll give you at least 30 days' written notice (in the app and by message) before any charge starts, and earlier orders are never charged. You can leave at any time with no penalty.",
+  "If a rider delivers your order, you pay the rider the delivery fee when they collect it.",
+];
+
+test("merchant email: the Pilot Partner Terms, with no price, founding offer or trial", () => {
+  for (const line of PILOT_LINES) {
+    assert.ok(merchant.text.includes(line), `text: ${line}`);
+    assert.ok(merchant.html.includes(escapeHtml(line)), `html: ${line}`);
+  }
   for (const part of [merchant.html, merchant.text]) {
-    assert.ok(part.includes("0% commission"));
-    assert.ok(
-      part.includes(
-        "Your subscription is S$29.95/month, with no commission. We&#39;ll tell you your billing dates in writing before your first payment."
-      ) ||
-        part.includes(
-          "Your subscription is S$29.95/month, with no commission. We'll tell you your billing dates in writing before your first payment."
-        )
-    );
-    assert.ok(part.includes("If a rider delivers your order, you pay the rider the delivery fee you agree with them."));
-    assert.doesNotMatch(part, /\bfree\b|first month|trial/i);
+    assert.doesNotMatch(part, /29\.9|S\$\d|founding|trial|first month|0% commission|zero commission|subscription is|billing dates/i);
   }
 });
 

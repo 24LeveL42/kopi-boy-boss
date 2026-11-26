@@ -19,10 +19,12 @@ import {
  *   docs/supabase-kitchen-admin-edit.sql             (installed on live; the guard + mask_paynow)
  *   docs/supabase-assisted-onboarding.sql            (installed twice: it must re-run cleanly)
  *   docs/supabase-assisted-onboarding-live-test.sql  (the live rollback-only test)
- * on stand-ins for the live objects the claim touches: auth.users and
+ * on top of the real billing files (subscriptions step 1 + step 2 +
+ * docs/supabase-billing-off.sql: the claim makes no subscription row), and
+ * stand-ins for the live objects the claim touches: auth.users and
  * handle_new_user, profiles and protect_profile_privileges, the cook
- * application guard / UEN check / promote / subscription triggers, the
- * partner terms stamp and the column grants on kitchens.
+ * application guard / UEN check / promote triggers, the partner terms stamp
+ * and the column grants on kitchens.
  *
  * Also checks that what Boss sends matches the database: the column lists
  * in assisted-onboarding.ts are granted, and hashClaimToken() gives the hash
@@ -33,6 +35,8 @@ const read = (p: string) => readFileSync(new URL(`../../docs/${p}`, import.meta.
 const KITCHEN_ADMIN = read("supabase-kitchen-admin-edit.sql");
 const SCRIPT = read("supabase-assisted-onboarding.sql");
 const LIVE_TEST = read("supabase-assisted-onboarding-live-test.sql");
+// The real billing files, in live order: subscriptions step 1, step 2, then billing off (the pilot).
+const BILLING = ["supabase-subscriptions.sql", "supabase-subscriptions-step2.sql", "supabase-billing-off.sql"].map(read);
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const ADMIN = id(900);
@@ -109,15 +113,6 @@ create function public.promote_approved_applicant() returns trigger language plp
 begin update public.profiles set role = tg_argv[0] where id = new.user_id and role = 'customer'; return new; end; $$;
 create trigger after_cook_application_approved after insert or update of status on public.cook_applications
   for each row when (new.status = 'approved') execute function public.promote_approved_applicant('cook');
-create table public.merchant_subscriptions (merchant_id uuid primary key references public.profiles(id) on delete restrict, applied_at timestamptz);
-create function public.billing_on_cook_application_approved() returns trigger language plpgsql security definer set search_path = '' as $$
-begin
-  if (select role from public.profiles where id = new.user_id) is distinct from 'cook' then raise exception 'billing_setup_failed: not promoted first'; end if;
-  insert into public.merchant_subscriptions (merchant_id, applied_at) values (new.user_id, (select min(created_at) from public.cook_applications where user_id = new.user_id)) on conflict do nothing;
-  return null;
-end; $$;
-create trigger after_cook_application_subscription_insert after insert on public.cook_applications
-  for each row when (new.status = 'approved') execute function public.billing_on_cook_application_approved();
 
 create table public.kitchens (id uuid primary key references public.profiles(id) on delete cascade,
   business_name text not null,
@@ -277,6 +272,7 @@ let before_fp: { guard: string; terms: string };
 before(async () => {
   db = new PGlite();
   await db.exec(STUBS);
+  for (const sql of BILLING) await db.exec(sql);
   await db.exec(KITCHEN_ADMIN);
   before_fp = await fingerprint();
   await db.exec(SCRIPT);
@@ -486,7 +482,7 @@ describe("claim links", () => {
 });
 
 describe("the owner's claim", () => {
-  it("creates a cook with a kitchen that isn't live, keeps the founding date, and works once", async () => {
+  it("creates a cook with a kitchen that isn't live, no subscription row or founding number (billing off), and works once", async () => {
     const shopId = await createDraft({ owner_mobile: "83333331", business_name: "TEST Claim Me", hero_image: "https://example.com/a.jpg" });
     await addItem(shopId, "Char kway teow", 6);
     const hiddenId = await addItem(shopId, "Not this");
@@ -524,8 +520,8 @@ describe("the owner's claim", () => {
     assert.equal(app.privacy_policy_version, "2026-10-v1");
     assert.equal(app.reviewed_by, ADMIN);
     assert.equal(new Date(app.created_at).toISOString(), "2026-11-01T02:00:00.000Z");
-    const sub = await one<{ applied_at: Date }>("select applied_at from public.merchant_subscriptions where merchant_id = $1", [owner]);
-    assert.equal(new Date(sub.applied_at).toISOString(), "2026-11-01T02:00:00.000Z", "founding is judged on when HQ set the shop up");
+    assert.deepEqual(await q("select merchant_id from public.merchant_subscriptions where merchant_id = $1", [owner]), [], "billing off: no subscription row");
+    assert.deepEqual(await q("select action from public.subscription_events where merchant_id = $1", [owner]), [], "billing off: no founding number, no event");
 
     const shop = await one("select status, claimed_user_id, acknowledged_token_id, acknowledged_user_agent from public.assisted_shops where id = $1", [shopId]);
     assert.deepEqual(shop, { status: "claimed", claimed_user_id: owner, acknowledged_token_id: tokenId, acknowledged_user_agent: "Mozilla/5.0 (Test)" });

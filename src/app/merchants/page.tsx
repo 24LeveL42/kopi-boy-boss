@@ -32,7 +32,6 @@ const COLUMNS = [
   { label: "Postal code" },
   { label: "Region" },
   { label: "Listing" },
-  { label: "Subscription" },
   { label: "Account" },
   { label: "Actions", align: "right" as const },
 ];
@@ -87,7 +86,6 @@ export default async function MerchantsPage({ searchParams }: { searchParams: Pr
         ) : (
           <StatusPill key="l" tone="grey" title="kitchens.is_live: hidden from the Customer app">Hidden</StatusPill>
         ),
-        <span key="s" style={{ color: "var(--oc-text-soft)" }} title="No subscription records in the database yet">—</span>,
         <ActivePill key="st" active={active} />,
         <div key="x" className="flex justify-end gap-2">
           <Link

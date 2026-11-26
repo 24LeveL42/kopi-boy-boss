@@ -24,7 +24,8 @@
 --      column HQ could write.
 --   4. assisted_claim_complete, in one transaction: an approved
 --      cook_applications row (the existing triggers then promote the role
---      to cook and create the subscription row and founding number), the
+--      to cook; a subscription row is created only if billing is on, and it
+--      is off for the pilot: docs/supabase-billing-off.sql), the
 --      profile name and phone, the kitchens row (acknowledged_terms_at sent
 --      as any value; the live terms trigger stamps now()), kitchen_addresses,
 --      and the visible menu items. is_live stays FALSE: the owner adds
@@ -52,10 +53,9 @@
 -- constraints stay as they are). Every create, edit, cancel, link issued,
 -- link sent, link revoked and claim. Never a token or a hash.
 --
--- PRICING PLAN: assisted_shops.pricing_plan is nullable text with no CHECK,
--- so whatever plan codes docs/supabase-merchant-plans.sql (hybrid plan)
--- defines can be stored without changing this table. It is not copied
--- anywhere at claim in v1.
+-- PRICING PLAN: assisted_shops.pricing_plan is nullable text with no CHECK.
+-- Unused during the pilot (Kopi Boy is free for merchants) and must stay
+-- empty. It is not copied anywhere at claim.
 --
 -- Runs as one transaction: if any check fails, nothing is changed.
 -- Safe to re-run.
@@ -115,7 +115,9 @@ begin
     raise exception 'Stopped: the partner terms trigger is not installed on kitchens';
   end if;
 
-  -- The subscription row on an approved INSERT (subscriptions step 2).
+  -- The billing trigger on an approved INSERT (subscriptions step 2). While
+  -- billing is off (docs/supabase-billing-off.sql) it makes no row; the
+  -- trigger itself stays.
   if not exists (
     select 1 from pg_trigger t
     where t.tgrelid = 'public.cook_applications'::regclass and not t.tgisinternal
@@ -161,7 +163,7 @@ create table if not exists public.assisted_shops (
     or business_uen ~ '^([0-9]{8}[A-Z]|[0-9]{9}[A-Z]|[TSR][0-9]{2}[A-Z]{2}[0-9]{4}[A-Z])$'),
   business_address text check (business_address is null or char_length(business_address) <= 300),
   postal_code text check (postal_code is null or postal_code ~ '^[0-9]{6}$'),
-  pricing_plan text,   -- nullable, no CHECK: codes from docs/supabase-merchant-plans.sql
+  pricing_plan text,   -- nullable, no CHECK: unused during the pilot, must stay empty
 
   -- Set by the database only
   created_by uuid not null,
@@ -177,7 +179,7 @@ create table if not exists public.assisted_shops (
 );
 
 comment on column public.assisted_shops.pricing_plan is
-  'Nullable, no CHECK: holds a plan code from docs/supabase-merchant-plans.sql (hybrid plan). Not copied at claim in v1.';
+  'Nullable, no CHECK: unused during the pilot (Kopi Boy is free for merchants); must stay empty. Not copied at claim.';
 
 -- One open draft per owner mobile, so HQ can't set up the same hawker twice.
 create unique index if not exists assisted_shops_open_mobile_idx
@@ -978,9 +980,10 @@ begin
   where p.id = p_user_id;
 
   -- 2. An approved cook application. Its existing triggers promote the role
-  --    to 'cook' and create the subscription row and founding number (fail
-  --    closed: an error there undoes the whole claim). created_at = when HQ
-  --    set the shop up, which is what founding eligibility reads.
+  --    to 'cook'. The billing trigger makes no subscription row and no
+  --    founding number while billing is off (the pilot); if billing is ever
+  --    on it fails closed (an error there undoes the whole claim).
+  --    created_at = when HQ set the shop up.
   insert into public.cook_applications (
     user_id, business_name, business_type, description, business_uen,
     business_address, postal_code, status, reviewed_by, reviewed_at,

@@ -1,8 +1,10 @@
 -- ============================================================================
 -- KOPI BOY — Delete a TEST merchant (owner-run, SQL editor).
 --
--- Since subscriptions step 2, every approved cook has a merchant_subscriptions
--- row, and that row is referenced ON DELETE RESTRICT: deleting the profile or
+-- Cooks approved while subscriptions step 2 was live have a
+-- merchant_subscriptions row (since billing off, docs/supabase-billing-off.sql,
+-- new cooks have none; the script handles both). That row is referenced ON
+-- DELETE RESTRICT: deleting the profile or
 -- the Auth user directly fails until the subscription row is gone. This
 -- script does it in the right order, in ONE transaction:
 --   subscription row (refused if ANY payment exists, voided ones included)

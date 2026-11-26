@@ -1,6 +1,10 @@
 -- ============================================================================
 -- KOPI BOY — Merchant subscriptions, step 2 LIVE TEST. ALWAYS ROLLS BACK.
 --
+-- ONLY FOR BILLING ON. During the pilot billing is off: run
+-- docs/supabase-billing-off-live-test.sql instead. This test refuses to run
+-- while billing_settings.billing_enabled is false.
+--
 -- Run after docs/supabase-subscriptions-step2.sql (and the backfill). It
 -- creates three throw-away users (@example.invalid, fixed test ids), takes
 -- them through the real approval path, checks every result, and then raises
@@ -52,9 +56,17 @@ declare
   v_removed boolean;
   v_refused text;
   v_delete_note text;
+  v_off boolean;
 begin
   if v_commit then
     raise exception 'The live test never commits. Leave v_commit = false.';
+  end if;
+  if exists (select 1 from information_schema.columns
+             where table_schema = 'public' and table_name = 'billing_settings' and column_name = 'billing_enabled') then
+    execute 'select not coalesce((select billing_enabled from public.billing_settings where id), false)' into v_off;
+    if v_off then
+      raise exception 'REFUSED: billing is off (pilot). Run docs/supabase-billing-off-live-test.sql instead. Nothing was saved.';
+    end if;
   end if;
   if exists (select 1 from auth.users where id in (u_founding, u_regular, u_rider)) then
     raise exception 'TEST FAILED: the test user ids already exist. Nothing was saved.';

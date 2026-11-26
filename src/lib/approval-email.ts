@@ -78,9 +78,9 @@ function content(kind: ApprovalKind, businessName: string | null | undefined): C
         "A quick reminder of how it works:",
       ],
       bullets: [
-        "0% commission on your orders.",
-        "Your subscription is S$29.95/month, with no commission. We'll tell you your billing dates in writing before your first payment.",
-        "If a rider delivers your order, you pay the rider the delivery fee you agree with them.",
+        "Kopi Boy is free to join and use during the pilot: no subscription, registration fee or setup fee.",
+        "Customers pay you directly; Kopi Boy doesn't handle payments. If we ever add a commission it will be 15% of food sales after discounts, not counting the delivery fee, and never higher. We'll give you at least 30 days' written notice (in the app and by message) before any charge starts, and earlier orders are never charged. You can leave at any time with no penalty.",
+        "If a rider delivers your order, you pay the rider the delivery fee when they collect it.",
       ],
       signOff: "See you on Kopi Boy!",
     };

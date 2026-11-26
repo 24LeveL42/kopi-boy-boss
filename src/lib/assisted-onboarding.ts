@@ -9,8 +9,9 @@
  *
  * Rules (the database enforces them too):
  * - Explicit columns, exactly DRAFT_SAVE_COLUMNS. Never status, the claim
- *   fields or anything the database fills in. pricing_plan is left alone in
- *   v1: its codes come with docs/supabase-merchant-plans.sql.
+ *   fields or anything the database fills in. pricing_plan is left alone:
+ *   it is unused during the pilot (Kopi Boy is free for merchants) and must
+ *   stay empty.
  * - Never PayNow: the owner enters it in the Partner app after claiming.
  * - Draft items: add, edit, hide/unhide. No delete.
  * - Stale-edit check: every update carries the updated_at HQ loaded.

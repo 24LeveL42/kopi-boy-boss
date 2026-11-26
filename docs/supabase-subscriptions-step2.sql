@@ -2,6 +2,12 @@
 -- KOPI BOY — Merchant subscriptions, step 2: the subscription row for every
 -- approved cook, and the founding numbers.
 --
+-- SUPERSEDED (pilot, Nov 2026): the subscription and founding offer are
+-- cancelled. docs/supabase-billing-off.sql keeps both triggers but makes
+-- them create NO row and NO founding number while
+-- billing_settings.billing_enabled is false. Once that is installed this
+-- file refuses to re-run (it would put back the old functions).
+--
 -- Plan: Desktop founding-trigger-plan.txt (approved), with the owner's
 -- answers Q-A to Q-G. Needs step 1 (docs/supabase-subscriptions.sql,
 -- including the applied_at column) and the Partner schema
@@ -118,6 +124,12 @@ begin
   end if;
   if array_length(v_missing, 1) > 0 then
     raise exception 'subscriptions step 2: missing %. Nothing was changed.', array_to_string(v_missing, ', ');
+  end if;
+  -- Billing off (docs/supabase-billing-off.sql) replaced these functions;
+  -- re-running this file would put the old ones back.
+  if exists (select 1 from information_schema.columns
+             where table_schema = 'public' and table_name = 'billing_settings' and column_name = 'billing_enabled') then
+    raise exception 'subscriptions step 2: billing off is installed (billing_settings.billing_enabled exists); re-running this file would undo it. Nothing was changed.';
   end if;
 end;
 $$;

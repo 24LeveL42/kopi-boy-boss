@@ -9,8 +9,9 @@ what to do and what you should see.
 - Use only new drafts whose name starts with **TEST** and a **spare mobile
   number you control** (it needs WhatsApp). Never touch KS Bakery or a real
   merchant. TEST Parata (beatit969) stays as it is.
-- The owner's claim gives the test kitchen a real founding number. Run part
-  F when no real approvals are expected, and clean up (part H) straight away.
+- Billing is off for the pilot (docs/supabase-billing-off.sql), so the
+  claim creates no subscription row and no founding number. Clean up
+  (part H) straight away.
 - Write down as you go: the draft id (from the address bar), the claim time
   and the kitchen id.
 
@@ -184,7 +185,7 @@ exact wording is up to the Partner page; what matters is the outcome.
 ## H. Cleanup (straight after F)
 
 1. Boss > Partners > **Delete test partner** for `TEST Assisted Hawker`, typing the name.
-   - [ ] It removes the subscription, menu, kitchen, application and profile.
+   - [ ] It removes the menu, kitchen, application and profile (there is no subscription row while billing is off).
 2. Supabase Dashboard > **Authentication > Users**: search by the **user id**
    (the kitchen id, also `assisted_shops.claimed_user_id`) and delete the user.
    The email is a random placeholder, so search by id, not email.
@@ -193,6 +194,5 @@ exact wording is up to the Partner page; what matters is the outcome.
 4. Optional: remove the drafts, their items and their links:
    `delete from public.assisted_shops where business_name like 'TEST Assisted%';`.
    The history rows stay; they are append-only by design.
-5. Founding number: if the test claim took the highest number, the next real approval reuses it.
-   If a real approval came in between, a gap stays.
-   - [ ] Check Boss > Subscriptions.
+5. Billing: Boss > **Billing (off)** still shows "Billing: OFF · Pilot terms v1".
+   - [ ] In the SQL editor, `select count(*) from public.merchant_subscriptions where merchant_id = '<kitchen id>';` returned 0 right after the claim in part F (check it then, before step 1 here).

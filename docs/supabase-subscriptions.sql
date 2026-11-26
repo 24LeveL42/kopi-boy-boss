@@ -1,6 +1,13 @@
 -- ============================================================================
 -- KOPI BOY — Merchant subscriptions, step 1: the SQL foundation
 --
+-- SUPERSEDED (pilot, Nov 2026): the S$29.95 subscription and the founding
+-- merchant offer are cancelled. Kopi Boy is free for merchants during the
+-- pilot. The tables are kept and billing is OFF: see
+-- docs/supabase-billing-off.sql. The owner decisions below are history.
+-- Once billing-off is installed this file refuses to re-run (it would put
+-- back the old subscription_status).
+--
 -- Plan: subscription-plan.txt sections 2 and 7 (approved). This file creates
 -- the billing tables, two date helpers, the status function, RLS, minimal
 -- grants and the kb.billing_write lock. It changes NOTHING that exists:
@@ -83,6 +90,12 @@ begin
   end if;
   if array_length(v_missing, 1) > 0 then
     raise exception 'subscriptions: missing %. Nothing was changed.', array_to_string(v_missing, ', ');
+  end if;
+  -- Billing off (docs/supabase-billing-off.sql) replaced subscription_status;
+  -- re-running this file would put the old one back.
+  if exists (select 1 from information_schema.columns
+             where table_schema = 'public' and table_name = 'billing_settings' and column_name = 'billing_enabled') then
+    raise exception 'subscriptions: billing off is installed (billing_settings.billing_enabled exists); re-running this file would undo it. Nothing was changed.';
   end if;
 end;
 $$;
@@ -222,6 +235,7 @@ comment on column public.merchant_subscriptions.applied_at is
   'When the merchant applied; the founding rule compares sgt_date(applied_at) < launch_date';
 
 -- FOUNDING MERCHANTS: the trigger rules (later step, not in this file)
+-- SUPERSEDED: there is no founding offer any more (billing off, pilot).
 --   * Eligibility: sgt_date(application created_at) < launch_date. No cap:
 --     every application submitted before launch qualifies.
 --   * The founding number is assigned at approval (next number = max + 1),
@@ -383,7 +397,8 @@ select pg_catalog.set_config('kb.billing_write', 'off', true);
 --   grace      due_date < p_today <= due_date + grace_days
 --   overdue    p_today > due_date + grace_days (restrictable)
 -- The "restricted" flag is separate: billing_restricted_at is not null.
--- Worked example, due 22 Mar 2027, grace 3: 21 Mar due_soon, 22 Mar
+-- (Billing off: docs/supabase-billing-off.sql makes it return 'off' first.)
+-- Worked example (history), due 22 Mar 2027, grace 3: 21 Mar due_soon, 22 Mar
 -- due_today, 23–25 Mar grace (25 Mar is the last grace day), 26 Mar overdue.
 -- Runs as the caller (SECURITY INVOKER): only the owner and the future
 -- SECURITY DEFINER billing functions call it, so no role is granted EXECUTE.

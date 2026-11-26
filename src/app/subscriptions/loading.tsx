@@ -1,9 +1,9 @@
-import { PageSkeleton, TableSkeleton } from "@/components/Skeleton";
+import { PageSkeleton, CardListSkeleton } from "@/components/Skeleton";
 
 export default function Loading() {
   return (
-    <PageSkeleton title="Subscriptions">
-      <TableSkeleton rows={1} columns={5} />
+    <PageSkeleton title="Billing (off)">
+      <CardListSkeleton rows={1} />
     </PageSkeleton>
   );
 }

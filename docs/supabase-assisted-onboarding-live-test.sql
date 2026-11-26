@@ -4,8 +4,9 @@
 -- Success ends with
 --   ERROR: TEST OK, rolled back: ...
 -- and any failure ends with a different error. Nothing is ever kept: no
--- draft, no link, no auth user, profile, application, kitchen, menu,
--- subscription row, founding number or audit row. (Push requests queued by
+-- draft, no link, no auth user, profile, application, kitchen, menu or
+-- audit row. Billing is off (pilot): the claim must make NO subscription
+-- row and NO founding number; run docs/supabase-billing-off.sql first. (Push requests queued by
 -- pg_net and Realtime changes only go out after a commit.)
 --
 -- Fill in ONE value (Find/replace):
@@ -27,9 +28,10 @@
 --   4. Preview (service_role): revoked / unknown / good tokens; only
 --      visible items; the mobile is masked.
 --   5. Claim: refused for an account made for another shop; the good
---      claim creates the approved application, role cook, subscription
---      row, kitchen (terms stamped by the trigger, NOT live), address,
---      menu; the token is used once (a second tap gets 'used').
+--      claim creates the approved application, role cook, kitchen (terms
+--      stamped by the trigger, NOT live), address, menu, and NO
+--      subscription row or founding number (billing off); the token is
+--      used once (a second tap gets 'used').
 --   6. After the claim HQ still can't set or change acknowledged_terms_at
 --      on the new kitchen (the unchanged a_kitchen_admin_guard), and the
 --      claimed draft is frozen.
@@ -348,8 +350,11 @@ begin
                    and privacy_policy_version = '2026-10-v1' and privacy_acknowledged_at is not null) then
     raise exception 'FAIL 5: approved cook application missing or wrong';
   end if;
-  if not exists (select 1 from public.merchant_subscriptions where merchant_id = v_owner) then
-    raise exception 'FAIL 5: no subscription row';
+  if exists (select 1 from public.merchant_subscriptions where merchant_id = v_owner) then
+    raise exception 'FAIL 5: the claim made a subscription row while billing is off';
+  end if;
+  if exists (select 1 from public.subscription_events where merchant_id = v_owner) then
+    raise exception 'FAIL 5: the claim wrote a subscription event (founding number) while billing is off';
   end if;
 
   if v_shop.status <> 'claimed' or v_shop.claimed_user_id <> v_owner
@@ -517,7 +522,7 @@ begin
   exception when insufficient_privilege then null;
   end;
 
-  raise exception 'TEST OK, rolled back: draft + menu by HQ, link issue/re-issue/sent/revoke, no hash visible, preview states, claim made cook + application + subscription + kitchen (terms stamped, not live) + address + menu, single use, HQ still refused on the terms stamp, expired/cancelled/rate limited, audit append-only. Nothing was saved.';
+  raise exception 'TEST OK, rolled back: draft + menu by HQ, link issue/re-issue/sent/revoke, no hash visible, preview states, claim made cook + application + kitchen (no subscription row or founding number) (terms stamped, not live) + address + menu, single use, HQ still refused on the terms stamp, expired/cancelled/rate limited, audit append-only. Nothing was saved.';
 end;
 $$;
 

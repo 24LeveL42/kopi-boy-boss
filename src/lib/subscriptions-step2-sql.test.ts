@@ -22,6 +22,8 @@ const STEP2 = read("supabase-subscriptions-step2.sql");
 const BACKFILL = read("supabase-subscriptions-step2-backfill.sql");
 const LIVE_TEST = read("supabase-subscriptions-step2-live-test.sql");
 const DELETE_SCRIPT = read("supabase-delete-test-merchant.sql");
+const BILLING_OFF = read("supabase-billing-off.sql");
+const BILLING_OFF_LIVE_TEST = read("supabase-billing-off-live-test.sql");
 
 function between(text: string, start: string, end: string): string {
   const a = text.indexOf(start);
@@ -37,6 +39,10 @@ const uncomment = (s: string) =>
     .join("\n");
 
 const CHECKS = between(STEP2, "-- CHECKS-BEGIN", "-- CHECKS-END")
+  .split("\n")
+  .filter((l) => l.startsWith("-- select "))
+  .map((l) => l.slice(3));
+const BILLING_OFF_CHECKS = between(BILLING_OFF, "-- CHECKS-BEGIN", "-- CHECKS-END")
   .split("\n")
   .filter((l) => l.startsWith("-- select "))
   .map((l) => l.slice(3));
@@ -931,6 +937,284 @@ describe("step 2 — live test script, owner delete script, checks, re-run, emer
     assert.match(await attempt(db, UNDO), /UNDO REFUSED/);
     await db.exec("rollback");
     assert.equal(await count(db, "select count(*)::int as n from pg_trigger where tgname like 'after_cook_application_subscription%'"), 2);
+    await db.close();
+  });
+});
+
+/*
+ * Billing OFF (docs/supabase-billing-off.sql): the pilot. Installed on top
+ * of step 1 + step 2 with existing rows, it must keep every row, keep both
+ * trigger names, and make approvals and approved inserts (the assisted
+ * claim path) create no row and no founding number.
+ */
+async function billingOffDb(): Promise<{ db: PGlite; founding: string; exempt: string }> {
+  const db = await freshDb();
+  // Rows made while billing was still "on": a founding merchant and an exempt admin-cook.
+  const founding = await addUser(db);
+  await approve(db, await apply(db, founding, "2026-12-01T00:00:00Z"));
+  const exempt = await addUser(db, { role: "admin" });
+  await approve(db, await apply(db, exempt, "2026-12-01T00:00:00Z"));
+  const results = await db.exec(BILLING_OFF);
+  assert.equal((results[results.length - 1].rows[0] as { result: string }).result, "BILLING OFF INSTALLED");
+  return { db, founding, exempt };
+}
+const ALL_OFF = { billing_enabled: false, reminders_inapp_enabled: false, reminders_email_enabled: false, restrictions_enabled: false };
+const settings = async (db: PGlite) =>
+  (
+    await rows<typeof ALL_OFF>(
+      db,
+      "select billing_enabled, reminders_inapp_enabled, reminders_email_enabled, restrictions_enabled from public.billing_settings"
+    )
+  )[0];
+const maxFounding = (db: PGlite) => count(db, "select coalesce(max(founding_number), 0)::int as n from public.merchant_subscriptions");
+
+describe("billing off — install", () => {
+  it("adds billing_enabled boolean NOT NULL DEFAULT false, everything off, and keeps every existing row unchanged", async () => {
+    const db = await freshDb();
+    const u = await addUser(db);
+    await approve(db, await apply(db, u, "2026-12-01T00:00:00Z"));
+    const snap = async () => ({
+      subs: await rows(db, "select to_jsonb(s) as r from public.merchant_subscriptions s order by merchant_id"),
+      events: await rows(db, "select to_jsonb(e) as r from public.subscription_events e order by created_at, id"),
+    });
+    const first = await snap();
+    await db.exec(BILLING_OFF);
+    assert.deepEqual(await snap(), first, "no row changed, no event written (the switches were already off)");
+    const [col] = await rows<{ data_type: string; is_nullable: string; column_default: string }>(
+      db,
+      "select data_type, is_nullable, column_default from information_schema.columns where table_name = 'billing_settings' and column_name = 'billing_enabled'"
+    );
+    assert.deepEqual(col, { data_type: "boolean", is_nullable: "NO", column_default: "false" });
+    assert.deepEqual(await settings(db), ALL_OFF);
+    await db.close();
+  });
+
+  it("keeps both trigger names and drops nothing (same tables, triggers and functions as before)", async () => {
+    const db = await freshDb();
+    const objects = async () => ({
+      tables: await rows(db, "select tablename from pg_tables where schemaname = 'public' order by 1"),
+      triggers: await rows(db, "select tgrelid::regclass::text as t, tgname, pg_get_triggerdef(oid) as d from pg_trigger where not tgisinternal order by 1, 2"),
+      functions: await rows(db, "select proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' order by 1"),
+    });
+    const first = await objects();
+    await db.exec(BILLING_OFF);
+    assert.deepEqual(await objects(), first);
+    await db.close();
+  });
+
+  it("switches that were on are turned off and logged once as switch_changed; re-running changes nothing more", async () => {
+    const db = await freshDb();
+    await db.exec(`begin; select set_config('kb.billing_write', 'on', true);
+      update public.billing_settings set reminders_email_enabled = true, restrictions_enabled = true; commit;`);
+    await db.exec(BILLING_OFF);
+    assert.deepEqual(await settings(db), ALL_OFF);
+    const ev = await rows<{ merchant_id: string | null; details: { before: Record<string, boolean>; source: string } }>(
+      db,
+      "select merchant_id, details from public.subscription_events where action = 'switch_changed'"
+    );
+    assert.equal(ev.length, 1);
+    assert.equal(ev[0].merchant_id, null);
+    assert.equal(ev[0].details.source, "supabase-billing-off.sql");
+    assert.equal(ev[0].details.before.reminders_email_enabled, true);
+    const results = await db.exec(BILLING_OFF);
+    assert.equal((results[results.length - 1].rows[0] as { result: string }).result, "BILLING OFF INSTALLED");
+    assert.equal(await count(db, "select count(*)::int as n from public.subscription_events where action = 'switch_changed'"), 1);
+    await db.close();
+  });
+
+  it("re-running the file changes nothing (functions, constraint, settings, data)", async () => {
+    const { db } = await billingOffDb();
+    const snap = async () => ({
+      subs: await rows(db, "select to_jsonb(s) as r from public.merchant_subscriptions s order by merchant_id"),
+      events: await count(db, "select count(*)::int as n from public.subscription_events"),
+      settings: await rows(db, "select to_jsonb(s) - 'updated_at' as r from public.billing_settings s"),
+      fns: await rows(db, "select proname, prosrc, prosecdef, proconfig, proacl::text from pg_proc where proname in ('billing_create_subscription', 'billing_on_cook_application_approved', 'subscription_status') order by proname"),
+      con: await rows(db, "select pg_get_constraintdef(oid) as d from pg_constraint where conname = 'billing_settings_off_means_off'"),
+    });
+    const first = await snap();
+    await db.exec(BILLING_OFF);
+    assert.deepEqual(await snap(), first);
+    await db.close();
+  });
+
+  it("refuses to run without step 2, and nothing changes", async () => {
+    const db = await freshDb({ step2: false });
+    assert.match(await attempt(db, BILLING_OFF), /billing off: missing .*billing_create_subscription.*Nothing was changed/);
+    await db.exec("rollback");
+    assert.equal(await count(db, "select count(*)::int as n from information_schema.columns where column_name = 'billing_enabled'"), 0);
+    await db.close();
+  });
+
+  it("after it, the step-1 and step-2 files refuse to re-run (they would put the old functions back)", async () => {
+    const { db } = await billingOffDb();
+    assert.match(await attempt(db, STEP1), /subscriptions: billing off is installed.*Nothing was changed/);
+    await db.exec("rollback");
+    assert.match(await attempt(db, STEP2), /subscriptions step 2: billing off is installed.*Nothing was changed/);
+    await db.exec("rollback");
+    assert.equal(await count(db, "select count(*)::int as n from pg_proc where proname = 'subscription_status' and prosrc like '%billing_enabled%'"), 1);
+    assert.equal(await count(db, "select count(*)::int as n from pg_proc where proname = 'billing_on_cook_application_approved' and prosrc like '%billing_enabled%'"), 1);
+    await db.close();
+  });
+
+  it("the read-only checks give the expected answers", async () => {
+    const { db } = await billingOffDb();
+    assert.deepEqual(await rows(db, BILLING_OFF_CHECKS[0]), [ALL_OFF]);
+    assert.deepEqual((await rows<{ tgname: string }>(db, BILLING_OFF_CHECKS[1])).map((r) => r.tgname), [
+      "after_cook_application_subscription",
+      "after_cook_application_subscription_insert",
+    ]);
+    assert.deepEqual(await rows(db, BILLING_OFF_CHECKS[2]), [{ kept: 2, not_off: 0 }]);
+    await db.close();
+  });
+});
+
+describe("billing off — behaviour", () => {
+  let db: PGlite;
+  let founding: string;
+  let exempt: string;
+  before(async () => {
+    ({ db, founding, exempt } = await billingOffDb());
+  });
+  after(() => db.close());
+
+  it("a Boss approval (pending -> approved) makes a cook with NO subscription row, NO founding number and NO event", async () => {
+    const u = await addUser(db);
+    const maxBefore = await maxFounding(db);
+    await approve(db, await apply(db, u, LAST_FOUNDING_MOMENT)); // would have been founding
+    assert.equal(await count(db, "select count(*)::int as n from public.profiles where id = $1 and role = 'cook'", [u]), 1);
+    assert.equal(await sub(db, u), undefined);
+    assert.deepEqual(await events(db, u), []);
+    assert.equal(await maxFounding(db), maxBefore);
+  });
+
+  it("an application INSERTED already approved (the assisted claim path) makes no row and no founding number", async () => {
+    const u = await addUser(db);
+    const maxBefore = await maxFounding(db);
+    await apply(db, u, "2026-11-01T02:00:00Z", "approved");
+    assert.equal(await count(db, "select count(*)::int as n from public.profiles where id = $1 and role = 'cook'", [u]), 1);
+    assert.equal(await sub(db, u), undefined);
+    assert.equal(await maxFounding(db), maxBefore);
+  });
+
+  it("a signed-in admin approving through RLS works the same (no row, no error)", async () => {
+    const u = await addUser(db);
+    const app = await apply(db, u, "2026-12-01T00:00:00Z");
+    await db.exec("begin");
+    await db.query("select set_config('request.jwt.claim.sub', $1, true)", [ADMIN]);
+    await db.exec("set local role authenticated");
+    await db.query("update public.cook_applications set status = 'approved', reviewed_at = now() where id = $1", [app]);
+    await db.exec("commit");
+    assert.equal(await count(db, "select count(*)::int as n from public.cook_applications where id = $1 and status = 'approved'", [app]), 1);
+    assert.equal(await sub(db, u), undefined);
+  });
+
+  it("billing can't block an approval any more: it goes through even with the settings row missing", async () => {
+    // Under step 2 this failed the approval (fail closed). Off: no billing work at all.
+    const u = await addUser(db);
+    const app = await apply(db, u, "2026-12-01T00:00:00Z");
+    await db.exec("begin; select set_config('kb.billing_write', 'on', true); delete from public.billing_settings;");
+    try {
+      await approve(db, app);
+      assert.equal(await count(db, "select count(*)::int as n from public.cook_applications where id = $1 and status = 'approved'", [app]), 1);
+      assert.equal(await sub(db, u), undefined);
+    } finally {
+      await db.exec("rollback");
+    }
+    assert.equal(await count(db, "select count(*)::int as n from public.billing_settings"), 1, "the settings row is back after the rollback");
+  });
+
+  it("billing_create_subscription refuses with billing_off (so the backfill can't make rows either)", async () => {
+    const u = await addUser(db);
+    const app = await apply(db, u, "2026-12-01T00:00:00Z", "approved");
+    assert.match(await attempt(db, "select public.billing_create_subscription($1, 'backfill')", [app]), /^billing_off: /);
+    assert.match(await attempt(db, backfillApply({ email: null, commit: true, expectedNotExempt: 1 })), /billing_off/);
+    await db.exec("rollback").catch(() => {});
+    assert.equal(await sub(db, u), undefined);
+  });
+
+  it("subscription_status is 'off' for every existing row, founding and exempt alike, on any date", async () => {
+    for (const day of ["2026-12-01", "2027-03-22", "2027-03-26", "2030-01-01"]) {
+      const r = await rows<{ s: string }>(db, "select public.subscription_status(s, $1::date) as s from public.merchant_subscriptions s order by merchant_id", [day]);
+      assert.deepEqual(r.map((x) => x.s), ["off", "off"], day);
+    }
+    assert.ok((await sub(db, founding))?.founding_number, "the old founding row is kept");
+    assert.equal((await sub(db, exempt))?.exempt, true, "the old exempt row is kept");
+  });
+
+  it("no reminder or restriction switch can go on while billing is off (even as owner with the flag)", async () => {
+    for (const col of ["reminders_inapp_enabled", "reminders_email_enabled", "restrictions_enabled"]) {
+      const err = await asOwnerWithFlag(db, () => attempt(db, `update public.billing_settings set ${col} = true`));
+      assert.match(err, /billing_settings_off_means_off/, col);
+    }
+  });
+
+  it("browser roles can't flip the switch or run the billing functions", async () => {
+    const err = await asUser(db, ADMIN, () => attempt(db, "update public.billing_settings set billing_enabled = true"));
+    assert.match(err, /permission denied/);
+    for (const fn of [
+      "public.billing_create_subscription(uuid, text, boolean, text)",
+      "public.billing_on_cook_application_approved()",
+      "public.subscription_status(public.merchant_subscriptions, date)",
+    ]) {
+      assert.equal(await count(db, `select (has_function_privilege('authenticated', '${fn}', 'EXECUTE') or has_function_privilege('anon', '${fn}', 'EXECUTE'))::int as n`), 0, fn);
+    }
+  });
+
+  it("a signed-in admin reads billing_enabled = false (what the Boss Billing page shows); a merchant reads nothing", async () => {
+    assert.deepEqual(await asUser(db, ADMIN, () => rows(db, "select billing_enabled from public.billing_settings where id = true")), [{ billing_enabled: false }]);
+    assert.deepEqual(await asUser(db, founding, () => rows(db, "select billing_enabled from public.billing_settings")), []);
+  });
+
+  it("the Boss delete flow still works: an old unpaid row is removed; a merchant with no row returns false", async () => {
+    const noRow = await addUser(db);
+    await approve(db, await apply(db, noRow, "2026-12-01T00:00:00Z"));
+    const r = await asUser(db, ADMIN, async () => ({
+      old: (await rows<{ r: boolean }>(db, "select public.admin_remove_unpaid_subscription($1, 'test') as r", [founding]))[0].r,
+      none: (await rows<{ r: boolean }>(db, "select public.admin_remove_unpaid_subscription($1, 'test') as r", [noRow]))[0].r,
+    }));
+    assert.deepEqual(r, { old: true, none: false });
+  });
+
+  it("the flag is the only thing off: with billing_enabled = true (owner, flag on) the step-2 behaviour comes back", async () => {
+    const u = await addUser(db);
+    const app = await apply(db, u, "2026-12-01T00:00:00Z");
+    const s = await asOwnerWithFlag(db, async () => {
+      await db.query("update public.billing_settings set billing_enabled = true");
+      await approve(db, app);
+      const st = await rows<{ s: string }>(db, "select public.subscription_status(s, '2026-12-01') as s from public.merchant_subscriptions s where merchant_id = $1", [u]);
+      return { sub: await sub(db, u), status: st[0]?.s };
+    });
+    assert.ok(s.sub?.founding_number, "a founding number while on");
+    assert.equal(s.status, "free");
+    assert.equal(await sub(db, u), undefined, "rolled back: off again");
+  });
+});
+
+describe("billing off — live test scripts", () => {
+  it("the billing-off live test passes and leaves nothing behind", async () => {
+    const { db } = await billingOffDb();
+    const tables = ["auth.users", "public.profiles", "public.cook_applications", "public.merchant_subscriptions", "public.subscription_events", "public.billing_settings"];
+    const before = await Promise.all(tables.map((t) => count(db, `select count(*)::int as n from ${t}`)));
+    const err = await attempt(db, BILLING_OFF_LIVE_TEST);
+    assert.match(
+      err,
+      /^TEST OK, rolled back: billing off, approval and approved insert made cook with no subscription row or founding number, 2 existing row\(s\) kept and read off, highest founding number still 1, create refused, switches locked off\. Nothing was saved\.$/
+    );
+    assert.deepEqual(await Promise.all(tables.map((t) => count(db, `select count(*)::int as n from ${t}`))), before);
+    assert.deepEqual(await settings(db), ALL_OFF);
+    await db.close();
+  });
+
+  it("the billing-off live test fails loudly if billing is somehow on", async () => {
+    const { db } = await billingOffDb();
+    await db.exec("begin; select set_config('kb.billing_write', 'on', true); update public.billing_settings set billing_enabled = true; commit;");
+    assert.match(await attempt(db, BILLING_OFF_LIVE_TEST), /^TEST FAILED: a billing switch is on/);
+    await db.close();
+  });
+
+  it("the step-2 live test refuses to run while billing is off", async () => {
+    const { db } = await billingOffDb();
+    assert.match(await attempt(db, LIVE_TEST), /^REFUSED: billing is off \(pilot\)/);
     await db.close();
   });
 });

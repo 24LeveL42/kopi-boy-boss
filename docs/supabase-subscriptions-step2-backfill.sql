@@ -1,4 +1,8 @@
 -- ============================================================================
+-- DO NOT RUN during the pilot. Billing is off (docs/supabase-billing-off.sql)
+-- and billing_create_subscription refuses with billing_off, so the apply
+-- block stops at the first row. Kept as history.
+--
 -- KOPI BOY — Merchant subscriptions, step 2 BACKFILL: a subscription row for
 -- every cook approved BEFORE the step-2 trigger existed.
 --

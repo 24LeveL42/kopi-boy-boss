@@ -11,8 +11,9 @@
  *    trimming, ignoring case. The expected name is read here, never taken
  *    from the browser.
  *  - a cook with any subscription payment record is refused (billing
- *    history is kept); their unpaid subscription row is removed through
- *    admin_remove_unpaid_subscription just before the profile row.
+ *    history is kept); their unpaid subscription row, if they have one
+ *    (only cooks approved before billing was switched off do), is removed
+ *    through admin_remove_unpaid_subscription just before the profile row.
  * Then the rows are deleted one table at a time, stopping at the first
  * failure. The result always says what was and wasn't deleted. It never
  * throws for an expected failure (Next hides thrown messages in production).
