@@ -3,7 +3,8 @@
  * Records every auth/rpc/table call in order. Answers come from `respond`:
  * keys are "auth.getUser", "rpc.<fn>" or "<table>.<op>" (op = select |
  * update | delete | insert). A value can be one result or an array used
- * in turn, one per call (the last one repeats).
+ * in turn, one per call (the last one repeats). storage.from(bucket)
+ * .getPublicUrl(path) answers like Supabase, under FAKE_STORAGE_PUBLIC.
  */
 import type { AnyClient } from "../admin-guard.ts";
 
@@ -19,6 +20,8 @@ export type Call = {
   /** Columns passed to .order(), in call order. */
   order?: string[];
 };
+
+export const FAKE_STORAGE_PUBLIC = "https://test.supabase.co/storage/v1/object/public/";
 
 export const ok = (data: unknown): Result => ({ data, error: null });
 export const fail = (message: string): Result => ({ data: null, error: { message } });
@@ -41,6 +44,11 @@ export function fakeSupabase(respond: Record<string, Result | Result[]>) {
         calls.push({ kind: "auth", name: "getUser", filters: [] });
         const r = answer("auth.getUser");
         return Promise.resolve({ data: { user: (r.data as unknown) ?? null }, error: r.error });
+      },
+    },
+    storage: {
+      from(bucket: string) {
+        return { getPublicUrl: (path: string) => ({ data: { publicUrl: `${FAKE_STORAGE_PUBLIC}${bucket}/${path}` } }) };
       },
     },
     rpc(name: string, args?: unknown) {

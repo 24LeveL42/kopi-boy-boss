@@ -434,6 +434,7 @@ test("actions.ts only calls assisted-onboarding.ts for this feature, after asser
     ["cancelAssistedShop", "cancelDraftShopWith"],
     ["importAssistedMenu", "importDraftMenuWith"],
     ["setAssistedCategoryPhoto", "setCategoryPhotoWith"],
+    ["setAssistedItemPhotos", "setDraftItemPhotosWith"],
   ]) {
     const start = actions.indexOf(`export async function ${name}(`);
     assert.ok(start > 0, name);

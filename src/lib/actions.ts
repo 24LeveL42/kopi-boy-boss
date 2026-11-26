@@ -28,7 +28,9 @@ import {
   saveDraftShopWith,
   setCategoryPhotoWith,
   setDraftItemHiddenWith,
+  setDraftItemPhotosWith,
   updateDraftItemWith,
+  type BulkPhotoResult,
   type CategoryPhotoResult,
   type DraftItemResult,
   type ImportResult,
@@ -310,6 +312,18 @@ export async function setAssistedCategoryPhoto(
   const { supabase } = await assertAdmin();
   const result = await setCategoryPhotoWith(supabase, shopId, category, photoUrl, replaceExisting);
   if (result.ok) revalidateAssisted(shopId);
+  return result;
+}
+
+/** "Bulk photos" on a draft: one item update per photo, own-folder URLs only (see setDraftItemPhotosWith). */
+export async function setAssistedItemPhotos(
+  shopId: string,
+  assignments: { itemId: string; photoUrl: string }[],
+  replaceExisting: boolean
+): Promise<BulkPhotoResult> {
+  const { supabase } = await assertAdmin();
+  const result = await setDraftItemPhotosWith(supabase, shopId, assignments, replaceExisting);
+  if (result.ok && result.updated > 0) revalidateAssisted(shopId);
   return result;
 }
 

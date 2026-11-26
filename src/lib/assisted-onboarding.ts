@@ -27,6 +27,7 @@ import type { AnyClient } from "./admin-guard.ts";
 import type { CuisineType, MenuItem, MerchantCategory } from "./types-kitchen.ts";
 import { MERCHANT_CATEGORIES, optionalUrl, PHOTO_MAX_BYTES, validateKitchenProfile, validateMenuItem, type MenuItemFields } from "./kitchen-admin.ts";
 import { CATEGORY_MAX, cleanCategory, NOTE_MAX, previewCsv, type CsvError, type ImportMode } from "./menu-csv.ts";
+import { BULK_APPLY_MAX, isOwnAssistedPhotoUrl } from "./bulk-photos.ts";
 
 // --- Types and column lists ---
 
@@ -610,6 +611,96 @@ export async function setCategoryPhotoWith(
   } catch (e) {
     return { ok: false, message: friendlyAssistedError(e instanceof Error ? e.message : String(e)) };
   }
+}
+
+// --- Draft menu: "Bulk photos" (one item update per photo, the usual path) ---
+
+export type BulkPhotoFailure = { itemId: string; message: string };
+export type BulkPhotoResult =
+  | { ok: true; updated: number; skipped: number; failed: BulkPhotoFailure[]; items: MenuItem[] | null }
+  | { ok: false; message: string };
+
+/**
+ * Applies the "Bulk photos" preview: sets photo_url on each listed draft
+ * item. Checks first (any failure refuses the whole request, nothing saved):
+ * the shop is a draft; every item id is valid, listed once and belongs to
+ * this shop; every photo URL is a file in this shop's own
+ * kitchen-photos/assisted/<shopId>/ folder (isOwnAssistedPhotoUrl). Then,
+ * one at a time, the same UPDATE as an item edit (photo_url only, with the
+ * updated_at just read as the stale-edit check), so the guard trigger
+ * refuses a claimed or cancelled shop and the audit trigger writes one
+ * item_updated row per item. Items that already have a photo are skipped
+ * unless replaceExisting. One failed item doesn't stop the rest.
+ */
+export async function setDraftItemPhotosWith(
+  supabase: AnyClient,
+  shopId: unknown,
+  assignments: unknown,
+  replaceExisting: unknown
+): Promise<BulkPhotoResult> {
+  const bad = checkIds(shopId);
+  if (bad) return { ok: false, message: bad };
+  if (typeof replaceExisting !== "boolean") return { ok: false, message: "Not saved: choose whether to replace photos that are already set." };
+  if (!Array.isArray(assignments) || assignments.length === 0) return { ok: false, message: "Not saved: no photos are paired with an item." };
+  if (assignments.length > BULK_APPLY_MAX) return { ok: false, message: `Not saved: apply at most ${BULK_APPLY_MAX} photos at a time.` };
+
+  let base: string;
+  try {
+    const probe = `assisted/${shopId}/probe.jpg`;
+    const url = supabase.storage.from("kitchen-photos").getPublicUrl(probe).data.publicUrl;
+    if (!url.endsWith(probe)) throw new Error("unexpected public URL");
+    base = url.slice(0, -probe.length);
+  } catch {
+    return { ok: false, message: "Not saved: couldn't work out the photo storage address." };
+  }
+
+  const wanted: { itemId: string; photoUrl: string }[] = [];
+  const seen = new Set<string>();
+  for (const a of assignments as unknown[]) {
+    const { itemId, photoUrl } = (a && typeof a === "object" ? a : {}) as { itemId?: unknown; photoUrl?: unknown };
+    if (checkIds(itemId)) return { ok: false, message: "Not saved: invalid item id." };
+    if (seen.has(itemId as string)) return { ok: false, message: "Not saved: the same item is paired with two photos." };
+    seen.add(itemId as string);
+    if (!isOwnAssistedPhotoUrl(photoUrl, shopId as string, base)) {
+      return { ok: false, message: "Not saved: only photos uploaded to this draft shop can be applied here." };
+    }
+    wanted.push({ itemId: itemId as string, photoUrl: photoUrl as string });
+  }
+
+  try {
+    const { data: shop, error: shopError } = await supabase.from("assisted_shops").select("id, status").eq("id", shopId).maybeSingle();
+    if (shopError) return { ok: false, message: friendlyAssistedError(shopError.message) };
+    if (!shop) return { ok: false, message: "Not saved: this assisted shop wasn't found." };
+    if ((shop as Row).status !== "draft") {
+      return { ok: false, message: "Not saved: this shop has already been claimed or cancelled, so its draft menu can't be changed." };
+    }
+  } catch (e) {
+    return { ok: false, message: friendlyAssistedError(e instanceof Error ? e.message : String(e)) };
+  }
+
+  const list = await listDraftItemsWith(supabase, shopId as string);
+  if (!list.ok) return { ok: false, message: friendlyAssistedError(list.message) };
+  const current = new Map(list.items.map((i) => [i.id, i]));
+  if (wanted.some((w) => !current.has(w.itemId))) {
+    return { ok: false, message: "Not saved: an item isn't in this draft menu any more. Reload the page." };
+  }
+
+  let updated = 0;
+  let skipped = 0;
+  const failed: BulkPhotoFailure[] = [];
+  for (const w of wanted) {
+    const item = current.get(w.itemId)!;
+    if (item.photo_url === w.photoUrl) continue;
+    if (item.photo_url && !replaceExisting) {
+      skipped++;
+      continue;
+    }
+    const result = await updateDraftItem(supabase, shopId, w.itemId, item.updated_at, { photo_url: w.photoUrl });
+    if (result.ok) updated++;
+    else failed.push({ itemId: w.itemId, message: result.message });
+  }
+  const fresh = updated ? await listDraftItemsWith(supabase, shopId as string) : list;
+  return { ok: true, updated, skipped, failed, items: fresh.ok ? fresh.items : null };
 }
 
 /** The one-line summary of a bulk audit row (counts only, as stored). */
