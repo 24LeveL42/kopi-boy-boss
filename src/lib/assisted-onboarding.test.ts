@@ -23,6 +23,7 @@ import {
   friendlyAssistedError,
   hashClaimToken,
   issueClaimLinkWith,
+  issueSigninLinkWith,
   loadClaimLinksWith,
   markClaimLinkSentWith,
   newClaimToken,
@@ -30,6 +31,9 @@ import {
   revokeClaimLinkWith,
   saveDraftShopWith,
   setDraftItemHiddenWith,
+  signinLinkFor,
+  signinMessage,
+  signinMobile,
   STALE_DRAFT_ITEM_MESSAGE,
   STALE_DRAFT_MESSAGE,
   toDraftItem,
@@ -650,4 +654,84 @@ test("the draft editor: category field, grouped headings with the category photo
   assert.match(imp, /const canImport = !!plan && preview!\.total > 0/, "Import is off while the preview has errors");
   assert.match(imp, /mode === "replace" && !window\.confirm\(replaceConfirmation\(plan\.existingHidden\)\)/);
   assert.match(imp, /importAssistedMenu\(shopId, text, mode\)/, "the server gets the CSV text and checks it again");
+});
+
+// --- Sign-in link for a claimed shop (docs/supabase-assisted-signin-link.sql) ---
+
+test("sign-in link: the token goes in the #fragment of the Partner /resume page, and nothing else is accepted", () => {
+  const t = newClaimToken();
+  assert.equal(signinLinkFor(t), `https://partners.kopi-boy.com/resume#${t}`);
+  for (const bad of ["", "short", `${t}x`, `${t.slice(1)}/`, "<script>".padEnd(43, "a")]) {
+    assert.throws(() => signinLinkFor(bad));
+  }
+});
+
+test("issuing a sign-in link sends only the hash (claim-style token), and returns the token and link once", async () => {
+  const { client, calls } = fakeSupabase({ "rpc.admin_issue_assisted_signin_link": ok([{ token_id: TOKEN_ID, expires_at: EXPIRES }]) });
+  const r = await issueSigninLinkWith(client, SHOP);
+  assert.ok(r.ok);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].name, "admin_issue_assisted_signin_link");
+  const args = calls[0].args as Record<string, string>;
+  assert.deepEqual(Object.keys(args).sort(), ["p_shop_id", "p_token_hash"]);
+  assert.equal(args.p_shop_id, SHOP);
+  assert.match(r.token, /^[A-Za-z0-9_-]{43}$/);
+  assert.equal(args.p_token_hash, await hashClaimToken(r.token));
+  assert.match(args.p_token_hash, /^[0-9a-f]{64}$/);
+  assert.ok(!JSON.stringify(calls).includes(r.token), "the raw token never goes to the database");
+  assert.equal(r.link, `https://partners.kopi-boy.com/resume#${r.token}`);
+  assert.equal(r.tokenId, TOKEN_ID);
+  assert.equal(r.expiresAt, EXPIRES);
+
+  const again = await issueSigninLinkWith(client, SHOP);
+  assert.ok(again.ok && again.token !== r.token, "a new token every time");
+});
+
+test("a refused or unconfirmed sign-in issue returns a message and no token; a bad id never reaches the database", async () => {
+  const refused = fakeSupabase({
+    "rpc.admin_issue_assisted_signin_link": fail("A sign-in link is only for a shop the owner has already claimed."),
+  });
+  assert.deepEqual(await issueSigninLinkWith(refused.client, SHOP), {
+    ok: false,
+    message: "Couldn't create the sign-in link: A sign-in link is only for a shop the owner has already claimed.",
+  });
+
+  for (const data of [[], [{ token_id: TOKEN_ID }], [{ expires_at: EXPIRES }]]) {
+    const r = await issueSigninLinkWith(fakeSupabase({ "rpc.admin_issue_assisted_signin_link": ok(data) }).client, SHOP);
+    assert.equal(r.ok, false);
+    assert.ok(!("token" in r) && !("link" in r));
+  }
+
+  const none = fakeSupabase({});
+  for (const bad of ["not-a-uuid", "", null, 42]) assert.equal((await issueSigninLinkWith(none.client, bad)).ok, false);
+  assert.equal(none.calls.length, 0);
+});
+
+test("the sign-in WhatsApp message names the owner and shop, carries the link and expiry, and warns not to forward", () => {
+  const link = signinLinkFor(newClaimToken());
+  const msg = signinMessage({ ownerName: " Tan  Ah Hock ", businessName: "Ah Hock Noodles", link, expiresAt: "2026-11-27T10:00:00Z" });
+  assert.match(msg, /^Hi Tan Ah Hock, this is Kopi Boy HQ\./);
+  assert.match(msg, /sign back in to Ah Hock Noodles/);
+  assert.ok(msg.includes(link));
+  assert.match(msg, /works once/);
+  assert.match(msg, /Fri, 27 Nov, 6:00\s?pm/);
+  assert.match(msg, /don't forward/);
+  const url = new URL(whatsappUrl("91234567", msg));
+  assert.equal(url.searchParams.get("text"), msg);
+});
+
+test("the sign-in number: the owner's profile phone, else the draft's mobile, else none", () => {
+  assert.deepEqual(signinMobile("+65 8123 4567", "91234567"), { mobile: "81234567", source: "profile" });
+  assert.deepEqual(signinMobile(null, "91234567"), { mobile: "91234567", source: "draft" });
+  assert.deepEqual(signinMobile("12345", "91234567"), { mobile: "91234567", source: "draft" });
+  assert.deepEqual(signinMobile(undefined, "123"), { mobile: null, source: null });
+});
+
+test("the claimed shop page shows the sign-in panel only for a claimed shop with an owner", () => {
+  const page = readFileSync(new URL("../app/merchants/assisted/[id]/page.tsx", import.meta.url), "utf8");
+  assert.match(page, /\{shop\.status === "claimed" && shop\.claimed_user_id && \(\s*<Section title="Sign-in link">\s*<SigninLinkPanel/);
+  const panel = readFileSync(new URL("../components/SigninLinkPanel.tsx", import.meta.url), "utf8");
+  assert.match(panel, /Issue sign-in link/);
+  assert.match(panel, /Open WhatsApp/);
+  assert.doesNotMatch(panel, /console\.|localStorage|sessionStorage/, "the link is never logged or stored");
 });

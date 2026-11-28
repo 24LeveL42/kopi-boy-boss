@@ -137,6 +137,7 @@ export type IssueLinkResult =
   | { ok: true; tokenId: string; expiresAt: string; token: string; link: string }
   | { ok: false; message: string };
 export type SimpleResult = { ok: true } | { ok: false; message: string };
+export type IssueSigninLinkResult = { ok: true; tokenId: string; expiresAt: string; token: string; link: string } | { ok: false; message: string };
 
 type Checked<T> = { ok: true; value: T } | { ok: false; message: string };
 
@@ -145,6 +146,8 @@ export const ADDRESS_MAX = 300;
 export const REASON_MAX = 200;
 export const CLAIM_LINK_HOURS = 48;
 export const CLAIM_LINK_BASE = "https://partners.kopi-boy.com/claim";
+export const SIGNIN_LINK_HOURS = 2;
+export const SIGNIN_LINK_BASE = "https://partners.kopi-boy.com/resume";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Same pattern as the assisted_shops.business_uen CHECK. */
@@ -325,6 +328,50 @@ export function claimMessage({
   ].join("\n\n");
 }
 
+/** https://partners.kopi-boy.com/resume#<token>. Same rule as the claim link: the token stays in the #fragment. */
+export function signinLinkFor(token: string): string {
+  if (!TOKEN.test(token)) throw new Error("Invalid sign-in token.");
+  return `${SIGNIN_LINK_BASE}#${token}`;
+}
+
+/** The WhatsApp message HQ sends with a sign-in link for a shop the owner has already claimed. */
+export function signinMessage({
+  ownerName,
+  businessName,
+  link,
+  expiresAt,
+}: {
+  ownerName: string;
+  businessName: string;
+  link: string;
+  expiresAt: string;
+}): string {
+  const name = ownerName.trim().replace(/\s+/g, " ");
+  return [
+    `Hi ${name}, this is Kopi Boy HQ.`,
+    `Here is your link to sign back in to ${businessName.trim()} on Kopi Boy:`,
+    link,
+    `The link works once and expires on ${formatSgt(expiresAt)}. Please don't forward it to anyone: it opens your shop account.`,
+  ].join("\n\n");
+}
+
+/**
+ * The number to send a sign-in link to: the owner's Partner profile phone
+ * (the claim copies the draft's mobile there, and the owner may have changed
+ * it since), else the draft's owner mobile. Null when neither is a valid
+ * Singapore mobile.
+ */
+export function signinMobile(
+  profilePhone: unknown,
+  draftMobile: unknown
+): { mobile: string; source: "profile" | "draft" } | { mobile: null; source: null } {
+  const fromProfile = normalizeOwnerMobile(profilePhone);
+  if (fromProfile) return { mobile: fromProfile, source: "profile" };
+  const fromDraft = normalizeOwnerMobile(draftMobile);
+  if (fromDraft) return { mobile: fromDraft, source: "draft" };
+  return { mobile: null, source: null };
+}
+
 /** wa.me link to the owner's Singapore mobile with the message filled in. */
 export function whatsappUrl(ownerMobile: string, message: string): string {
   const mobile = normalizeOwnerMobile(ownerMobile);
@@ -341,6 +388,9 @@ export function friendlyAssistedError(message: string, prefix = "Not saved"): st
   }
   if (/assisted_claim_tokens_one_open_idx/i.test(m)) {
     return `${prefix}: another link was issued for this shop at the same moment. Reload the page.`;
+  }
+  if (/assisted_signin_tokens_one_open_idx/i.test(m)) {
+    return `${prefix}: another sign-in link was issued for this shop at the same moment. Reload the page.`;
   }
   if (/check constraint/i.test(m)) {
     return `${prefix}: one of the values isn't allowed. Check the category, cuisine, mobile, UEN, postal code and prices.`;
@@ -753,6 +803,33 @@ export async function issueClaimLinkWith(supabase: AnyClient, shopId: unknown): 
       return { ok: false, message: `${prefix}: the database didn't confirm it. Reload the page and check the links list.` };
     }
     return { ok: true, tokenId: row.token_id, expiresAt: row.expires_at, token, link: claimLinkFor(token) };
+  } catch (e) {
+    return { ok: false, message: friendlyAssistedError(e instanceof Error ? e.message : String(e), prefix) };
+  }
+}
+
+/**
+ * A sign-in link for a CLAIMED shop (docs/supabase-assisted-signin-link.sql).
+ * Same token rules as the claim link: Boss makes the token (newClaimToken),
+ * sends only its hash (hashClaimToken) to admin_issue_assisted_signin_link,
+ * which revokes any older unused sign-in link of the shop. The raw token and
+ * link are returned ONCE, for the admin's screen: never logged or stored.
+ */
+export async function issueSigninLinkWith(supabase: AnyClient, shopId: unknown): Promise<IssueSigninLinkResult> {
+  if (typeof shopId !== "string" || !UUID.test(shopId)) return { ok: false, message: "Couldn't create the sign-in link: invalid shop id." };
+  const prefix = "Couldn't create the sign-in link";
+  try {
+    const token = newClaimToken();
+    const { data, error } = await supabase.rpc("admin_issue_assisted_signin_link", {
+      p_shop_id: shopId,
+      p_token_hash: await hashClaimToken(token),
+    });
+    if (error) return { ok: false, message: friendlyAssistedError(error.message, prefix) };
+    const row = rowsOf(data)[0];
+    if (!row || typeof row.token_id !== "string" || typeof row.expires_at !== "string") {
+      return { ok: false, message: `${prefix}: the database didn't confirm it. Try again.` };
+    }
+    return { ok: true, tokenId: row.token_id, expiresAt: row.expires_at, token, link: signinLinkFor(token) };
   } catch (e) {
     return { ok: false, message: friendlyAssistedError(e instanceof Error ? e.message : String(e), prefix) };
   }

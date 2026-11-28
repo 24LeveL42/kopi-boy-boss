@@ -6,6 +6,7 @@ import { Card, LoadError } from "@/components/ops/EmptyState";
 import { AssistedShopForm } from "@/components/AssistedShopForm";
 import { AssistedMenuEditor } from "@/components/AssistedMenuEditor";
 import { ClaimLinkPanel } from "@/components/ClaimLinkPanel";
+import { SigninLinkPanel } from "@/components/SigninLinkPanel";
 import { CancelAssistedShop } from "@/components/CancelAssistedShop";
 import { AssistedAuditLog } from "@/components/AssistedAuditLog";
 import { getViewer, hasAdminRole } from "@/lib/require-admin";
@@ -16,6 +17,7 @@ import {
   claimReadiness,
   formatSgt,
   loadClaimLinksWith,
+  signinMobile,
   toDraftItem,
   type AssistedAuditRow,
   type AssistedShop,
@@ -102,6 +104,13 @@ export default async function AssistedShopPage({ params }: { params: Promise<{ i
     : { data: [] as { id: string; full_name: string | null }[] };
   const names = new Map((people ?? []).map((p) => [p.id, p.full_name?.trim() || "Admin"]));
 
+  // Sign-in link (claimed shops only): the owner's number on file.
+  const owner =
+    shop.status === "claimed" && shop.claimed_user_id
+      ? await supabase.from("profiles").select("phone").eq("id", shop.claimed_user_id).maybeSingle<{ phone: string | null }>()
+      : null;
+  const signinTo = signinMobile(owner?.data?.phone, shop.owner_mobile);
+
   const subtitle = isDraft
     ? "A draft: nothing is visible to customers. When it's ready, create the claim link and send it to the owner on WhatsApp."
     : shop.status === "claimed"
@@ -131,6 +140,18 @@ export default async function AssistedShopPage({ params }: { params: Promise<{ i
             </Link>
           )}
         </Card>
+      )}
+
+      {shop.status === "claimed" && shop.claimed_user_id && (
+        <Section title="Sign-in link">
+          <SigninLinkPanel
+            shopId={shop.id}
+            businessName={shop.business_name}
+            ownerName={shop.owner_name}
+            mobile={signinTo.mobile}
+            mobileSource={signinTo.source}
+          />
+        </Section>
       )}
 
       <Section title="Shop details">

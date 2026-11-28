@@ -1358,3 +1358,327 @@ describe("UEN after claiming — live test and the existing files", () => {
     assert.equal(fp.assisted_claim_complete, UEN_PINS.after.assisted_claim_complete);
   });
 });
+
+// --- Sign-in link for a claimed shop (docs/supabase-assisted-signin-link.sql) ---
+
+const SIGNIN = read("supabase-assisted-signin-link.sql");
+const SIGNIN_LIVE_TEST = read("supabase-assisted-signin-link-live-test.sql");
+const SIGNIN_NEW = ["admin_issue_assisted_signin_link", "assisted_signin_consume", "assisted_signin_rate_limited", "assisted_signin_audit_append_only"];
+const SIGNIN_TABLES = ["assisted_signin_tokens", "assisted_signin_attempts", "assisted_signin_audit"];
+
+/** md5 of every public function's text and grants, except the new ones. */
+async function otherFunctions(d: PGlite): Promise<Record<string, string>> {
+  const rows = (await d.query<{ sig: string; fp: string }>(
+    `select p.oid::regprocedure::text as sig, md5(pg_get_functiondef(p.oid) || coalesce(p.proacl::text, '')) as fp
+     from pg_proc p where p.pronamespace = 'public'::regnamespace and p.prokind = 'f' and not (p.proname = any($1::text[]))`,
+    [SIGNIN_NEW]
+  )).rows;
+  return Object.fromEntries(rows.map((r) => [r.sig, r.fp]));
+}
+
+/** Columns, constraints, policies, triggers and table grants outside the two new tables. */
+async function otherObjects(d: PGlite) {
+  return (await d.query(
+    `select 'col' k, table_schema || '.' || table_name || '.' || column_name || ':' || data_type v from information_schema.columns
+       where table_schema in ('public', 'auth', 'storage') and not (table_name = any($1::text[]))
+     union all select 'con', conrelid::regclass::text || ':' || conname || ':' || pg_get_constraintdef(oid) from pg_constraint
+       where conrelid <> 0 and not (conrelid::regclass::text = any($1::text[]))
+     union all select 'pol', schemaname || '.' || tablename || ':' || policyname || ':' || coalesce(qual, '') || ':' || coalesce(with_check, '') from pg_policies
+       where not (tablename = any($1::text[]))
+     union all select 'trg', tgrelid::regclass::text || ':' || tgname || ':' || tgenabled::text from pg_trigger
+       where not tgisinternal and not (tgrelid::regclass::text = any($1::text[]))
+     union all select 'acl', c.oid::regclass::text || ':' || coalesce(c.relacl::text, '') from pg_class c
+       where c.relnamespace in ('public'::regnamespace, 'auth'::regnamespace, 'storage'::regnamespace) and c.relkind in ('r', 'v')
+         and not (c.relname = any($1::text[]))
+     order by 1, 2`,
+    [SIGNIN_TABLES]
+  )).rows;
+}
+
+describe("sign-in link — install", () => {
+  for (const [label, stack] of [
+    ["onboarding + menu import", () => freshStack(true)],
+    [
+      "with the UEN-later file installed too",
+      async () => {
+        const d = await uenStack();
+        assert.equal((await runScript(d, UEN_LATER)).result, "UEN LATER INSTALLED");
+        return d;
+      },
+    ],
+  ] as const) {
+    it(`installs (${label}), changes no existing function, table, constraint, policy, trigger or grant, and re-runs cleanly (CRLF too)`, async () => {
+      const d = await stack();
+      const fns = await otherFunctions(d);
+      const objs = await otherObjects(d);
+      assert.deepEqual(await runScript(d, SIGNIN), { result: "SIGNIN LINK INSTALLED", error: null });
+      assert.deepEqual(await otherFunctions(d), fns);
+      assert.deepEqual(await otherObjects(d), objs);
+      assert.deepEqual(await runScript(d, SIGNIN.replace(/\n/g, "\r\n")), { result: "SIGNIN LINK INSTALLED", error: null });
+      assert.deepEqual(await otherFunctions(d), fns);
+      assert.deepEqual(await otherObjects(d), objs);
+      await d.close();
+    });
+  }
+
+  it("stops with nothing made when assisted onboarding isn't installed", async () => {
+    const d = new PGlite();
+    await d.exec(STUBS);
+    const { error } = await runScript(d, SIGNIN);
+    assert.match(error ?? "", /^Sign-in link: missing public\.assisted_shops.*Nothing was changed/);
+    assert.equal((await d.query("select 1 from pg_class where relname like 'assisted_signin_%'")).rows.length, 0);
+    assert.equal((await d.query("select 1 from pg_proc where proname = any($1::text[])", [SIGNIN_NEW])).rows.length, 0);
+    await d.close();
+  });
+
+  it("the post-install check refuses to commit when an existing function changed in the same run", async () => {
+    const d = await freshStack(true);
+    const fns = await otherFunctions(d);
+    // An extra statement slipped into the file that edits an existing function: the check must catch it.
+    const tampered = SIGNIN.replace(
+      "-- 3. CHECKS AFTER",
+      "create or replace function public.assisted_onboarding_audit_append_only() returns trigger language plpgsql set search_path = '' as $x$ begin return null; end; $x$;\n-- 3. CHECKS AFTER"
+    );
+    assert.match((await runScript(d, tampered)).error ?? "", /^Stopped: an existing function changed/);
+    assert.deepEqual(await otherFunctions(d), fns);
+    assert.equal((await d.query("select 1 from pg_class where relname like 'assisted_signin_%'")).rows.length, 0);
+    await d.close();
+  });
+
+  it("only adds: the only functions it creates are its own, it alters only its own tables, and the rollback is commented out and drops only its own objects", () => {
+    const created = [...SIGNIN.matchAll(/create or replace function public\.(\w+)\(/g)].map((m) => m[1]).sort();
+    assert.deepEqual(created, [...SIGNIN_NEW].sort());
+    assert.deepEqual([...new Set([...SIGNIN.matchAll(/alter table public\.(\w+)/g)].map((m) => m[1]))].sort(), [...SIGNIN_TABLES].sort());
+    const rollback = SIGNIN.slice(SIGNIN.indexOf("-- 4. ROLLBACK"));
+    const drops = [...rollback.matchAll(/drop (?:function|table) if exists public\.(\w+)/g)].map((m) => m[1]).sort();
+    assert.deepEqual(drops, [...SIGNIN_NEW, ...SIGNIN_TABLES].sort());
+    assert.ok(rollback.split("\n").every((l) => l.trim() === "" || l.startsWith("--")), "the rollback is commented out");
+  });
+
+  it("the rollback, run on its own, removes exactly what the install made", async () => {
+    const d = await freshStack(true);
+    const fns = await otherFunctions(d);
+    const objs = await otherObjects(d);
+    assert.equal((await runScript(d, SIGNIN)).result, "SIGNIN LINK INSTALLED");
+    const rollback = SIGNIN.slice(SIGNIN.indexOf("-- 4. ROLLBACK"))
+      .split("\n")
+      .filter((l) => l.startsWith("-- ") && /^-- (begin|drop|commit|select)/.test(l))
+      .map((l) => l.slice(3))
+      .join("\n");
+    assert.equal((await runScript(d, rollback)).result, "SIGNIN LINK REMOVED");
+    assert.deepEqual(await otherFunctions(d), fns);
+    assert.deepEqual(await otherObjects(d), objs);
+    assert.equal((await d.query("select 1 from pg_class where relname like 'assisted_signin_%'")).rows.length, 0);
+    assert.equal((await d.query("select 1 from pg_proc where proname = any($1::text[])", [SIGNIN_NEW])).rows.length, 0);
+    await d.close();
+  });
+});
+
+describe("sign-in link — functions", () => {
+  let d: PGlite;
+  const OWNER = id(950);
+  const OWNER_2 = id(952);
+  let shop = "";
+  let shop2 = "";
+
+  type Caller = "admin" | "owner" | "anon" | "service";
+
+  /** Runs fn in a committed transaction as that caller (an admin session is plain authenticated). */
+  async function asIn<T>(who: Caller, fn: () => Promise<T>): Promise<T> {
+    await d.exec("begin");
+    try {
+      const uid = who === "admin" ? ADMIN : who === "owner" ? OWNER : null;
+      await d.query("select set_config('request.jwt.claims', $1, true)", [
+        JSON.stringify(uid ? { sub: uid, role: "authenticated" } : { role: who === "service" ? "service_role" : "anon" }),
+      ]);
+      await d.exec(`set local role ${uid ? "authenticated" : who === "service" ? "service_role" : "anon"}`);
+      const r = await fn();
+      await d.exec("commit");
+      return r;
+    } catch (e) {
+      await d.exec("rollback");
+      throw e;
+    }
+  }
+  /** Issues a link the way Boss does: a fresh claim-style token, only its hash to the database. */
+  const issue = async (shopId = shop) => {
+    const token = newClaimToken();
+    const hash = await hashClaimToken(token);
+    const row = await asIn("admin", async () =>
+      (await d.query<{ token_id: string; expires_at: string }>("select * from public.admin_issue_assisted_signin_link($1, $2)", [shopId, hash])).rows[0]
+    );
+    return { token, hash, ...row };
+  };
+  type Answer = { status: string; user_id?: string };
+  const consume = (hash: unknown, client: string = freshClient()) =>
+    asIn("service", async () => (await d.query<{ r: Answer }>("select public.assisted_signin_consume($1, $2) as r", [hash, client])).rows[0].r);
+  const claimedShop = async (owner: string, mobile: string) => {
+    await d.query("insert into auth.users (id, email, raw_app_meta_data) values ($1, $2, '{}')", [owner, `${owner}@assisted.invalid`]);
+    // As the claim leaves it (written as postgres: the draft guard lets it through).
+    return (await d.query<{ id: string }>(
+      `insert into public.assisted_shops (business_name, category, cuisine_type, owner_name, owner_mobile, created_by, status, claimed_user_id, claimed_at)
+       values ('TEST Claimed', 'home-cook', 'chinese', 'Tan', $3, $1, 'claimed', $2, now()) returning id`,
+      [ADMIN, owner, mobile]
+    )).rows[0].id;
+  };
+  const usedAt = async (tokenId: string) =>
+    (await d.query<{ used_at: string | null }>("select used_at from public.assisted_signin_tokens where id = $1", [tokenId])).rows[0].used_at;
+
+  before(async () => {
+    d = await freshStack(true);
+    assert.equal((await runScript(d, SIGNIN)).result, "SIGNIN LINK INSTALLED");
+    shop = await claimedShop(OWNER, "91234567");
+    shop2 = await claimedShop(OWNER_2, "91234568");
+  });
+
+  it("stores exactly the hash Boss sent, 2 hours; consume answers ok + the owner's id once, then used", async () => {
+    const r = await issue();
+    const hours = (new Date(r.expires_at).getTime() - Date.now()) / 3_600_000;
+    assert.ok(hours > 1.98 && hours <= 2.001, `expires in ${hours} h`);
+    const stored = (await d.query<{ token_hash: string; user_id: string }>("select token_hash, user_id from public.assisted_signin_tokens where id = $1", [r.token_id])).rows[0];
+    assert.deepEqual(stored, { token_hash: r.hash, user_id: OWNER });
+    assert.deepEqual(await consume(r.hash), { status: "ok", user_id: OWNER });
+    assert.deepEqual(await consume(r.hash), { status: "used" });
+  });
+
+  it("(1) refuses anything but a 64-hex hash, the raw token included", async () => {
+    for (const bad of [null, "", newClaimToken(), "A".repeat(64), "0".repeat(63)]) {
+      await rejects(asIn("admin", () => d.query("select * from public.admin_issue_assisted_signin_link($1, $2)", [shop, bad])), /Invalid sign-in token/);
+    }
+  });
+
+  it("a new link revokes the older one, which then answers revoked", async () => {
+    const a = await issue();
+    const b = await issue();
+    assert.deepEqual(await consume(a.hash), { status: "revoked" });
+    assert.deepEqual(await consume(b.hash), { status: "ok", user_id: OWNER });
+    const old = (await d.query<{ revoked_at: string | null; used_at: string | null }>("select revoked_at, used_at from public.assisted_signin_tokens where id = $1", [a.token_id])).rows[0];
+    assert.ok(old.revoked_at && !old.used_at);
+  });
+
+  it("expired, cancelled shop, shop not claimed by that account, deleted account: the right status and the link stays unused", async () => {
+    const t = await issue();
+    await d.query("update public.assisted_signin_tokens set created_at = now() - interval '3 hours', expires_at = now() - interval '1 second' where id = $1", [t.token_id]);
+    assert.deepEqual(await consume(t.hash), { status: "expired" });
+
+    const c = await issue();
+    await d.query("update public.assisted_shops set status = 'cancelled' where id = $1", [shop]);
+    assert.deepEqual(await consume(c.hash), { status: "cancelled" });
+    await d.query("update public.assisted_shops set status = 'claimed' where id = $1", [shop]);
+
+    const u = await issue();
+    await d.query("update public.assisted_signin_tokens set user_id = $1 where id = $2", [CUSTOMER, u.token_id]);
+    assert.deepEqual(await consume(u.hash), { status: "invalid" });
+
+    const v = await issue(shop2);
+    await d.query("delete from auth.users where id = $1", [OWNER_2]);
+    assert.deepEqual(await consume(v.hash), { status: "invalid" });
+    await rejects(issue(shop2), /The owner's account no longer exists/);
+
+    for (const x of [t, c, u, v]) assert.equal(await usedAt(x.token_id), null);
+  });
+
+  it("unknown, malformed, the raw token and NULL are invalid; a bad client key raises", async () => {
+    const t = await issue();
+    for (const bad of [null, "", "not hex", t.token, "0".repeat(64), "A".repeat(64)]) assert.deepEqual(await consume(bad), { status: "invalid" });
+    for (const key of ["", "not-a-key", "A".repeat(64), null]) {
+      await rejects(asIn("service", () => d.query("select public.assisted_signin_consume($1, $2)", [t.hash, key])), /assisted_signin: bad client key/);
+    }
+    assert.equal(await usedAt(t.token_id), null);
+  });
+
+  it("rate limit, per client key, like the claim: 10 failed in 15 minutes, or 60 in total; a limited call never uses the link", async () => {
+    const good = await issue();
+    const key = freshClient();
+    for (let n = 0; n < 10; n++) assert.deepEqual(await consume("0".repeat(64), key), { status: "invalid" });
+    assert.deepEqual(await consume(good.hash, key), { status: "rate_limited" });
+    assert.equal(await usedAt(good.token_id), null);
+
+    // Older than 15 minutes no longer counts.
+    await d.query("update public.assisted_signin_attempts set at = now() - interval '16 minutes' where client_key = $1", [key]);
+    const total = freshClient();
+    await d.query("insert into public.assisted_signin_attempts (client_key, result) select $1, 'ok' from generate_series(1, 60)", [total]);
+    assert.deepEqual(await consume(good.hash, total), { status: "rate_limited" });
+    assert.equal(await usedAt(good.token_id), null);
+
+    assert.deepEqual(await consume(good.hash, key), { status: "ok", user_id: OWNER });
+
+    // Every call is logged with its result; rows older than a day are removed as calls come in.
+    const results = (await d.query<{ result: string }>("select result from public.assisted_signin_attempts where client_key = $1 order by id", [key])).rows.map((r) => r.result);
+    assert.deepEqual(results, [...Array(10).fill("invalid"), "rate_limited", "ok"]);
+    await d.query("update public.assisted_signin_attempts set at = now() - interval '25 hours' where client_key = $1", [key]);
+    await consume("0".repeat(64));
+    assert.equal((await d.query("select 1 from public.assisted_signin_attempts where client_key = $1", [key])).rows.length, 0);
+  });
+
+  it("(1) refuses a draft or cancelled shop, an unknown shop, the owner, anon and service_role", async () => {
+    for (const status of ["draft", "cancelled"]) {
+      await d.query("update public.assisted_shops set status = $1 where id = $2", [status, shop]);
+      await rejects(issue(), /A sign-in link is only for a shop the owner has already claimed/);
+    }
+    await d.query("update public.assisted_shops set status = 'claimed' where id = $1", [shop]);
+    await rejects(issue(id(999)), /Shop not found/);
+    const call = "select * from public.admin_issue_assisted_signin_link($1, $2)";
+    await rejects(asIn("owner", () => d.query(call, [shop, "1".repeat(64)])), /Not allowed: admins only/);
+    await rejects(asIn("anon", () => d.query(call, [shop, "1".repeat(64)])), /permission denied/);
+    await rejects(asIn("service", () => d.query(call, [shop, "1".repeat(64)])), /permission denied/);
+  });
+
+  it("(2) and the rate-limit helper are not callable by anon or authenticated (the owner, or an admin session)", async () => {
+    for (const who of ["anon", "owner", "admin"] as const) {
+      await rejects(asIn(who, () => d.query("select public.assisted_signin_consume($1, $2)", ["0".repeat(64), "0".repeat(64)])), /permission denied/);
+      await rejects(asIn(who, () => d.query("select public.assisted_signin_rate_limited($1)", ["0".repeat(64)])), /permission denied/);
+    }
+    await rejects(asIn("service", () => d.query("select public.assisted_signin_rate_limited($1)", ["0".repeat(64)])), /permission denied/);
+  });
+
+  it("nobody reads tokens or attempts; only HQ reads the audit; the audit never holds a token or hash and is append-only", async () => {
+    for (const who of ["anon", "owner", "admin", "service"] as const) {
+      await rejects(asIn(who, () => d.query("select * from public.assisted_signin_tokens")), /permission denied/);
+      await rejects(asIn(who, () => d.query("select * from public.assisted_signin_attempts")), /permission denied/);
+    }
+    const rows = await asIn("admin", async () => (await d.query<{ action: string; details: unknown }>("select action, details from public.assisted_signin_audit")).rows);
+    for (const action of ["signin_link_issued", "signin_link_revoked", "signin_link_used"]) assert.ok(rows.some((r) => r.action === action), action);
+    assert.ok(rows.every((r) => !/[0-9a-f]{64}|[A-Za-z0-9_-]{43}/.test(JSON.stringify(r.details))));
+    assert.equal((await asIn("owner", async () => (await d.query("select * from public.assisted_signin_audit")).rows)).length, 0);
+    await rejects(asIn("service", () => d.query("select * from public.assisted_signin_audit")), /permission denied/);
+    await rejects(d.query("delete from public.assisted_signin_audit"), /append-only/);
+    await rejects(d.query("update public.assisted_signin_audit set details = '{}'"), /append-only/);
+  });
+
+  it("the install leaves no attempt row behind (its own check is undone)", async () => {
+    const fresh = await freshStack(true);
+    assert.equal((await runScript(fresh, SIGNIN)).result, "SIGNIN LINK INSTALLED");
+    assert.equal((await fresh.query("select 1 from public.assisted_signin_attempts")).rows.length, 0);
+    await fresh.close();
+  });
+
+  it("the live test passes and rolls back (CRLF too); it refuses without an admin id and before install", async () => {
+    const live = await freshStack(true);
+    assert.match((await runScript(live, SIGNIN_LIVE_TEST.replaceAll("PUT-ADMIN-ID", ADMIN))).error ?? "", /REFUSED: run docs\/supabase-assisted-signin-link\.sql \(rev 2\) first/);
+    assert.equal((await runScript(live, SIGNIN)).result, "SIGNIN LINK INSTALLED");
+    assert.match((await runScript(live, SIGNIN_LIVE_TEST)).error ?? "", /REFUSED: fill in PUT-ADMIN-ID first/);
+    const count = async () =>
+      (await live.query<Record<string, number>>(
+        `select (select count(*)::int from auth.users) users, (select count(*)::int from public.assisted_shops) shops,
+                (select count(*)::int from public.kitchens) kitchens, (select count(*)::int from public.assisted_signin_tokens) tokens,
+                (select count(*)::int from public.assisted_signin_attempts) attempts,
+                (select count(*)::int from public.assisted_signin_audit) audit, (select count(*)::int from public.assisted_onboarding_audit) onboarding_audit`
+      )).rows[0];
+    const before = await count();
+    const { error } = await runScript(live, SIGNIN_LIVE_TEST.replaceAll("PUT-ADMIN-ID", ADMIN));
+    assert.match(error ?? "(no closing exception)", /^TEST OK, rolled back/);
+    assert.deepEqual(await count(), before);
+    assert.match((await runScript(live, SIGNIN_LIVE_TEST.replaceAll("PUT-ADMIN-ID", ADMIN).replace(/\n/g, "\r\n"))).error ?? "", /^TEST OK, rolled back/);
+    assert.deepEqual(await count(), before);
+    await live.close();
+  });
+
+  it("the live test also passes with the UEN-later file installed", async () => {
+    const live = await uenStack();
+    assert.equal((await runScript(live, UEN_LATER)).result, "UEN LATER INSTALLED");
+    assert.equal((await runScript(live, SIGNIN)).result, "SIGNIN LINK INSTALLED");
+    assert.match((await runScript(live, SIGNIN_LIVE_TEST.replaceAll("PUT-ADMIN-ID", ADMIN))).error ?? "", /^TEST OK, rolled back/);
+    await live.close();
+  });
+});

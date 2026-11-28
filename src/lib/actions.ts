@@ -23,6 +23,7 @@ import {
   cancelDraftShopWith,
   createDraftShopWith,
   issueClaimLinkWith,
+  issueSigninLinkWith,
   markClaimLinkSentWith,
   revokeClaimLinkWith,
   importDraftMenuWith,
@@ -37,6 +38,7 @@ import {
   type ImportResult,
   type DraftSaveResult,
   type IssueLinkResult,
+  type IssueSigninLinkResult,
   type SimpleResult,
 } from "@/lib/assisted-onboarding";
 
@@ -365,6 +367,17 @@ export async function revokeAssistedClaimLink(shopId: string, tokenId: string, r
   const result = await revokeClaimLinkWith(supabase, tokenId, reason);
   if (result.ok) revalidateAssisted(shopId);
   return result;
+}
+
+/**
+ * A one-time sign-in link back into a CLAIMED shop owner's existing account
+ * (docs/supabase-assisted-signin-link.sql). Returns the link once, for the
+ * admin's screen; it is never logged or stored. Nothing to revalidate: the
+ * page shows no sign-in link state.
+ */
+export async function issueAssistedSigninLink(shopId: string): Promise<IssueSigninLinkResult> {
+  const { supabase } = await assertAdmin();
+  return issueSigninLinkWith(supabase, shopId);
 }
 
 export async function cancelAssistedShop(shopId: string, reason: string): Promise<SimpleResult> {
